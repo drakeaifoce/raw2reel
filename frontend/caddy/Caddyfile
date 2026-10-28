@@ -1,0 +1,19 @@
+# Конфиг контейнера фронтенда: раздаёт собранные файлы. Наружу он не смотрит,
+# TLS и домены — забота Caddy на рёбрах.
+:80 {
+	encode zstd gzip
+
+	# Отдельным handle, иначе SPA-фоллбэк ниже перехватил бы /health
+	# и healthcheck контейнера получал бы index.html.
+	handle /health {
+		respond "ok" 200
+	}
+
+	handle {
+		root * /srv
+		# Неизвестный путь отдаёт index.html: без этого роуты React Router
+		# ломаются при перезагрузке страницы.
+		try_files {path} /index.html
+		file_server
+	}
+}
