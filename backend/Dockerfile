@@ -11,6 +11,9 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
+# Как можно позже: значение меняется каждую сборку, и слои выше остаются в кэше
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 USER bun
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

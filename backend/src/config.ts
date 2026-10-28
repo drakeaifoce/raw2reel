@@ -5,6 +5,7 @@
  */
 export type Config = {
   port: number
+  version: string
   mongoUrl: string | undefined
   mongoDb: string
   blobConnectionString: string | undefined
@@ -14,6 +15,9 @@ export type Config = {
 
 export const config: Config = {
   port: Number(process.env.PORT ?? 3000),
+  // Подставляется при сборке образа через --build-arg GIT_SHA, поэтому не может
+  // разойтись с тем, что развёрнуто. Локальный запуск отдаёт dev.
+  version: process.env.GIT_SHA ?? 'dev',
   mongoUrl: process.env.MONGO_URL,
   mongoDb: process.env.MONGO_DB ?? 'raw2reel',
   blobConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
