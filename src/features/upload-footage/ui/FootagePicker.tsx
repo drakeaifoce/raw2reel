@@ -54,6 +54,8 @@ export function FootagePicker() {
 
   return (
     <>
+      {/* Drag handlers only enhance the native file input wrapped by this label. */}
+      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <label
         className={clsx(styles.dropzone, dragging && styles.dragging)}
         onDragOver={(event) => {
