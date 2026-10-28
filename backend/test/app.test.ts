@@ -22,9 +22,19 @@ describe('маршруты', () => {
     expect(config.version).toBe(process.env.GIT_SHA ?? 'dev')
   })
 
-  test('неизвестный путь это 404', async () => {
-    const response = await get('/нет-такого')
+  test('неизвестный путь это 404 с указанием пути', async () => {
+    const response = await get('/no-such-path')
     expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'not found', path: '/no-such-path' })
+  })
+
+  test('путь отдаётся как пришёл, то есть процентно-кодированным', async () => {
+    // URL.pathname не декодирует, и ответ это не скрывает: в логах отладки
+    // важнее видеть ровно то, что прислал клиент.
+    const response = await get('/нет-такого')
+    const body = (await response.json()) as { path: string }
+    expect(body.path).toBe('/%D0%BD%D0%B5%D1%82-%D1%82%D0%B0%D0%BA%D0%BE%D0%B3%D0%BE')
+    expect(decodeURIComponent(body.path)).toBe('/нет-такого')
   })
 })
 

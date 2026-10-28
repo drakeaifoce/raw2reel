@@ -27,5 +27,6 @@ export async function handle(request: Request): Promise<Response> {
     return json(result, result.ready ? 200 : 503)
   }
 
-  return json({ error: 'not found' }, 404)
+  // Путь в ответе: без него отладка опечатки в URL превращается в угадывание
+  return json({ error: 'not found', path: pathname }, 404)
 }
