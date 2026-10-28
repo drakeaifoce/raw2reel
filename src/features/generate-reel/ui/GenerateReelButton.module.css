@@ -1,0 +1,11 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
