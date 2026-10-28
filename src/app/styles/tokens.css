@@ -32,6 +32,8 @@
   --color-accent-soft-hover: #9cc3ff;
   --color-accent-tint: #0f1729;
   --color-accent-glow: rgb(110 168 255 / 50%);
+  --color-beat-strong: #4d8eff;
+  --color-beat-medium: #1e3a6e;
 
   /* Typography */
   --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;

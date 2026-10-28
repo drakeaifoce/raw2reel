@@ -1,0 +1,42 @@
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  transition: color var(--transition-fast);
+}
+
+.todo {
+  color: var(--color-text-subtle);
+}
+
+.active {
+  color: var(--color-text);
+}
+
+.done {
+  color: var(--color-text-secondary);
+}
+
+.marker {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent-soft);
+}
+
+.pending {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border-strong);
+}
+
+.agent {
+  font-weight: 600;
+}
