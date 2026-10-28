@@ -1,0 +1,27 @@
+# Маршрутизация приложений. Деплой кладёт этот файл в /opt/raw2reel/infra/conf.d/,
+# откуда его импортирует Caddyfile хоста. Блок git.* живёт отдельно, в конфиге
+# хоста — чтобы неудачный деплой приложения не мог уронить Gitea, которая этот
+# деплой и выполняет.
+
+raw2reel.studio, www.raw2reel.studio {
+	import common
+
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy backend:3000
+	}
+
+	handle /ai/* {
+		uri strip_prefix /ai
+		reverse_proxy ai:8000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+api.raw2reel.studio {
+	import common
+	reverse_proxy backend:3000
+}

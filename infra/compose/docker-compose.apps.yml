@@ -1,0 +1,34 @@
+# Приложения живут отдельным compose-проектом от инфраструктуры (caddy, gitea,
+# runner): так деплой приложения не может задеть CI, который его выполняет.
+# Сеть создана инфраструктурным проектом, здесь она внешняя.
+
+name: raw2reel-apps
+
+networks:
+  edge:
+    external: true
+    name: raw2reel_edge
+
+services:
+  frontend:
+    image: raw2reel/frontend:${FRONTEND_TAG:?нужен FRONTEND_TAG}
+    restart: unless-stopped
+    networks: [edge]
+    mem_limit: 128m
+
+  backend:
+    image: raw2reel/backend:${BACKEND_TAG:?нужен BACKEND_TAG}
+    restart: unless-stopped
+    env_file:
+      - /opt/raw2reel/secrets/app.env
+    networks: [edge]
+    mem_limit: 384m
+
+  ai:
+    image: raw2reel/ai:${AI_TAG:?нужен AI_TAG}
+    restart: unless-stopped
+    env_file:
+      - /opt/raw2reel/secrets/app.env
+    networks: [edge]
+    # Предобработка изображений — самый жадный до памяти сервис из трёх
+    mem_limit: 640m
