@@ -1,0 +1,10 @@
+.link {
+  padding: 12px 4px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--color-text);
+}
