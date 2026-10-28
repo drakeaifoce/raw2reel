@@ -22,6 +22,12 @@ Upload a raw media dump — Raw2Reel finds the highlights (Muse Vision), caption
 
 ## Getting started
 
+All commands below run from the `frontend/` directory of the monorepo:
+
+```bash
+cd frontend
+```
+
 ### 1. Prerequisites
 
 | Tool    | Version   | Why                                                  |
@@ -52,7 +58,7 @@ node -v && pnpm -v
 
 ### 2. Install dependencies
 
-From the project root:
+From `frontend/`:
 
 ```bash
 pnpm install
