@@ -23,8 +23,8 @@ Each app is self-contained: its own dependencies, scripts, linters and README.
   Docs: [frontend/README.md](frontend/README.md)
 - [backend](backend/) — Bun, TypeScript. Talks to Cosmos DB over the MongoDB API
   and to Azure Blob Storage.
-- [ai](ai/) — Python 3.12, FastAPI, uv. Orchestrates the external Muse pipelines
-  and preprocesses images; holds no local models.
+- [ai](ai/) — Python 3.12, FastAPI, uv. Served under `/ml/*`. Orchestrates the
+  external Muse pipelines and preprocesses images; holds no local models.
 - [infra](infra/) — deployment and CI. Docs: [infra/README.md](infra/README.md)
 
 ## Quick start
@@ -47,6 +47,15 @@ Then open http://localhost:5173. Full setup, scripts and troubleshooting are in
 - Keep app-specific config (linters, formatters, `.nvmrc`, lockfiles) inside the app directory.
 - Environment variables are documented in [.env.example](.env.example) — keys and
   descriptions only, never values.
+
+## Routing
+
+- `/` — frontend
+- `/api/*` — backend
+- `/ml/*` — ML service
+
+Backend and ML expose `/health`, `/ready` and `/version`. `/version` returns the
+commit sha baked into the image at build time, so it changes on every deploy.
 
 ## CI/CD
 
