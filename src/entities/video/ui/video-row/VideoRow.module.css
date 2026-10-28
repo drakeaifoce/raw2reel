@@ -1,0 +1,47 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-sunken);
+  color: inherit;
+  text-align: left;
+}
+
+button.row {
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+button.row:hover {
+  border-color: var(--color-accent-soft);
+}
+
+button.row:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}

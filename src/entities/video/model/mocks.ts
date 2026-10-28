@@ -1,0 +1,52 @@
+import type { Video } from './types'
+
+export const SAMPLE_VIDEOS: Video[] = [
+  {
+    id: 'sample-skate',
+    title: 'Street skate session',
+    meta: 'Sample · 3 min raw · 1080p',
+    tone: '#2C3B58',
+    faces: [
+      { id: 'a', label: 'Person 1', shots: 'in 41 shots', tone: '#8FA8D9' },
+      { id: 'b', label: 'Person 2', shots: 'in 23 shots', tone: '#D9A98F' },
+      { id: 'c', label: 'Person 3', shots: 'in 6 shots', tone: '#A8D98F' },
+    ],
+  },
+  {
+    id: 'sample-cafe',
+    title: 'Café vlog with friends',
+    meta: 'Sample · 5 min raw · 4K',
+    tone: '#4A3326',
+    faces: [
+      { id: 'a', label: 'Person 1', shots: 'in 58 shots', tone: '#E0B48A' },
+      { id: 'b', label: 'Person 2', shots: 'in 37 shots', tone: '#C9A0D9' },
+      { id: 'c', label: 'Person 3', shots: 'in 19 shots', tone: '#8FD9C9' },
+      { id: 'd', label: 'Person 4', shots: 'in 4 shots', tone: '#D98F9E' },
+    ],
+  },
+  {
+    id: 'sample-gym',
+    title: 'Gym day montage',
+    meta: 'Sample · 2 min raw · 1080p',
+    tone: '#24443A',
+    faces: [
+      { id: 'a', label: 'Person 1', shots: 'in 33 shots', tone: '#9ED98F' },
+      { id: 'b', label: 'Person 2', shots: 'in 12 shots', tone: '#D9C98F' },
+    ],
+  },
+]
+
+/** Builds a mock video for a user upload until Muse Vision is wired in. */
+export function createUploadedVideo(fileName: string): Video {
+  return {
+    id: `upload-${fileName}`,
+    title: fileName,
+    meta: 'Your upload · scanned by Muse Vision',
+    tone: '#33313B',
+    faces: [
+      { id: 'a', label: 'Person 1', shots: 'in 27 shots', tone: '#C9B48F' },
+      { id: 'b', label: 'Person 2', shots: 'in 15 shots', tone: '#8FB4D9' },
+      { id: 'c', label: 'Person 3', shots: 'in 5 shots', tone: '#D99F8F' },
+    ],
+  }
+}
