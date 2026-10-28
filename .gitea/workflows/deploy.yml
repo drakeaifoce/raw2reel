@@ -1,0 +1,82 @@
+# Сборка образов и развёртывание на том же хосте, где крутится Gitea.
+#
+# Реестр не используется: единственный хост, поэтому образ собирается прямо в
+# его docker-демон через смонтированный сокет. Это убирает push/pull и экономит
+# место на 30-гигабайтном диске; цена — истории образов вне хоста нет.
+#
+# Линтеры здесь не повторяются: их гоняет ci.yml на pull request. Прямой пуш в
+# main линт обходит, поэтому main стоит закрыть защитой ветки в настройках Gitea.
+# Ошибки компиляции деплой всё равно поймает — сборка образа выполняет build.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: ./infra/scripts/changed.sh | tee -a "$GITHUB_OUTPUT"
+
+      # В образе runner'а только Node, docker CLI ставится здесь.
+      # Сокет и /opt/raw2reel смонтированы в задачу через runner.yaml.
+      - name: docker CLI
+        run: |
+          set -eu
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/debian/gpg \
+            | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update -qq
+          apt-get install -y -qq docker-ce-cli docker-compose-plugin
+          docker version --format '{{.Server.Version}}'
+
+      - name: сборка образов
+        id: build
+        env:
+          BUILD_FRONTEND: ${{ steps.detect.outputs.frontend }}
+          BUILD_BACKEND: ${{ steps.detect.outputs.backend }}
+          BUILD_AI: ${{ steps.detect.outputs.ai }}
+        run: |
+          set -eu
+          SHA="${GITHUB_SHA:0:12}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          rebuilt=""
+          for project in frontend backend ai; do
+            var="BUILD_$(echo "$project" | tr '[:lower:]' '[:upper:]')"
+            eval "flag=\${$var}"
+            if [ "$flag" = "true" ]; then
+              echo "::group::сборка $project"
+              docker build -t "raw2reel/$project:$SHA" "./$project"
+              echo "::endgroup::"
+              rebuilt="$rebuilt $project"
+            else
+              echo "$project: без изменений, пересборка не нужна"
+            fi
+          done
+          echo "rebuilt=$rebuilt" >> "$GITHUB_OUTPUT"
+
+      - name: развёртывание
+        run: ./infra/scripts/deploy.sh "${{ steps.build.outputs.sha }}" ${{ steps.build.outputs.rebuilt }}
+
+      - name: проверка снаружи
+        run: |
+          set -eu
+          for url in https://raw2reel.studio/ https://raw2reel.studio/api/health https://raw2reel.studio/ai/health; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$url")"
+            echo "$url -> $code"
+            [ "$code" = 200 ] || { echo "ожидался 200" >&2; exit 1; }
+          done
