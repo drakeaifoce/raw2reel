@@ -53,6 +53,8 @@ Then open http://localhost:5173. Full setup, scripts and troubleshooting are in
 - `/` — frontend
 - `/api/*` — backend
 - `/ml/*` — ML service
+- `/git/` — Gitea (git hosting and CI), served under a subpath so it needs no
+  DNS record of its own
 
 Backend and ML expose `/health`, `/ready` and `/version`. `/version` returns the
 commit sha baked into the image at build time, so it changes on every deploy.

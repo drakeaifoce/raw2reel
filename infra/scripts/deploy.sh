@@ -20,8 +20,10 @@ ROOT="/opt/raw2reel"
 APPS_DIR="$ROOT/apps"
 STATE="$APPS_DIR/.env"
 PREV="$APPS_DIR/.env.prev"
-CONF_D="$ROOT/infra/conf.d"
-CONF_BACKUP="$APPS_DIR/conf.d.prev"
+# Каталог только для маршрутов приложений. Блок апекса и маршрут Gitea
+# живут в conf.d и деплою не принадлежат.
+CONF_D="$ROOT/infra/apps.d"
+CONF_BACKUP="$APPS_DIR/apps.d.prev"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE=("docker" "compose" "-f" "$REPO/infra/compose/docker-compose.apps.yml" "--env-file" "$STATE")
 

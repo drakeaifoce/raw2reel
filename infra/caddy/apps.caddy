@@ -1,29 +1,22 @@
-# Маршрутизация приложений. Деплой кладёт этот файл в /opt/raw2reel/infra/conf.d/,
-# откуда его импортирует Caddyfile хоста. Блок git.* живёт отдельно, в конфиге
-# хоста — чтобы неудачный деплой приложения не мог уронить Gitea, которая этот
-# деплой и выполняет.
+# Маршруты приложений. Это НЕ самостоятельный site-блок: файл импортируется
+# внутрь блока апекса, который описан на хосте в conf.d/05-apex.caddy и
+# репозиторию недоступен. Там же лежит маршрут Gitea — чтобы неудачный деплой
+# приложения не мог уронить CI, который этот деплой выполняет.
+#
+# Деплой кладёт файл в /opt/raw2reel/infra/apps.d/10-apps.caddy.
 
-raw2reel.studio, www.raw2reel.studio {
-	import common
-
-	handle /api/* {
-		uri strip_prefix /api
-		reverse_proxy backend:3000
-	}
-
-	# Публичный префикс /ml/*, контейнер при этом называется ai: снаружи
-	# сервис представлен как ML, внутренние имена не переименовывались.
-	handle /ml/* {
-		uri strip_prefix /ml
-		reverse_proxy ai:8000
-	}
-
-	handle {
-		reverse_proxy frontend:80
-	}
+handle /api/* {
+	uri strip_prefix /api
+	reverse_proxy backend:3000
 }
 
-api.raw2reel.studio {
-	import common
-	reverse_proxy backend:3000
+# Публичный префикс /ml/*, контейнер при этом называется ai: снаружи сервис
+# представлен как ML, внутренние имена не переименовывались.
+handle /ml/* {
+	uri strip_prefix /ml
+	reverse_proxy ai:8000
+}
+
+handle {
+	reverse_proxy frontend:80
 }
