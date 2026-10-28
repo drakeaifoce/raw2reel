@@ -1,0 +1,19 @@
+# Repo-wide ignores. App-specific rules live in each app's own .gitignore.
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Local Claude Code preview config
+.claude/launch.json
