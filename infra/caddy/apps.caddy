@@ -11,8 +11,10 @@ raw2reel.studio, www.raw2reel.studio {
 		reverse_proxy backend:3000
 	}
 
-	handle /ai/* {
-		uri strip_prefix /ai
+	# Публичный префикс /ml/*, контейнер при этом называется ai: снаружи
+	# сервис представлен как ML, внутренние имена не переименовывались.
+	handle /ml/* {
+		uri strip_prefix /ml
 		reverse_proxy ai:8000
 	}
 
