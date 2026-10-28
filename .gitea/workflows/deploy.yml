@@ -60,7 +60,7 @@ jobs:
             eval "flag=\${$var}"
             if [ "$flag" = "true" ]; then
               echo "::group::сборка $project"
-              docker build -t "raw2reel/$project:$SHA" "./$project"
+              docker build --build-arg "GIT_SHA=$SHA" -t "raw2reel/$project:$SHA" "./$project"
               echo "::endgroup::"
               rebuilt="$rebuilt $project"
             else
@@ -75,8 +75,22 @@ jobs:
       - name: проверка снаружи
         run: |
           set -eu
-          for url in https://raw2reel.studio/ https://raw2reel.studio/api/health https://raw2reel.studio/ai/health; do
+          SHA="${{ steps.build.outputs.sha }}"
+          for url in https://raw2reel.studio/ https://raw2reel.studio/api/health https://raw2reel.studio/ml/health; do
             code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$url")"
             echo "$url -> $code"
             [ "$code" = 200 ] || { echo "ожидался 200" >&2; exit 1; }
+          done
+          # Версия сверяется только у того, что пересобиралось: остальные
+          # сервисы остаются на прежних тегах, и это нормально.
+          for pair in "frontend:" "backend:api" "ai:ml"; do
+            project="${pair%%:*}"; prefix="${pair#*:}"
+            [ -n "$prefix" ] || continue
+            case " ${{ steps.build.outputs.rebuilt }} " in
+              *" $project "*) ;;
+              *) echo "$project: не пересобирался, версию не сверяю"; continue ;;
+            esac
+            got="$(curl -sS --max-time 20 "https://raw2reel.studio/$prefix/version" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+            echo "/$prefix/version -> $got (ожидался $SHA)"
+            [ "$got" = "$SHA" ] || { echo "версия не совпала" >&2; exit 1; }
           done
