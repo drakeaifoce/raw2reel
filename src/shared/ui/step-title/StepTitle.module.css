@@ -1,0 +1,31 @@
+.title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.badge {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-muted);
+  color: var(--color-accent-soft);
+  font-family: var(--font-body);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.complete {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}

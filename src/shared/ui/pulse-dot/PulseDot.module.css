@@ -1,0 +1,18 @@
+.dot {
+  display: inline-block;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}

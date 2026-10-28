@@ -1,0 +1,14 @@
+.frame {
+  position: relative;
+  flex: none;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-3xl);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+}
+
+.placeholder {
+  border: 1.5px dashed var(--color-border-dashed);
+  background: transparent;
+}
