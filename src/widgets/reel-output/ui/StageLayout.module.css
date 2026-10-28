@@ -1,0 +1,25 @@
+/* Shared two-column layout for the generating and result states. */
+.layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  width: 100%;
+  max-width: 900px;
+}
+
+.details {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
