@@ -8,6 +8,10 @@ class Settings(BaseSettings):
 
     port: int = 8000
 
+    # Подставляется при сборке образа через --build-arg GIT_SHA, поэтому не может
+    # разойтись с тем, что развёрнуто. Локальный запуск отдаёт dev.
+    git_sha: str = "dev"
+
     mongo_url: str | None = None
     mongo_db: str = "raw2reel"
 

@@ -16,6 +16,9 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 COPY --from=deps /app /app
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app
+# Как можно позже: значение меняется каждую сборку, и слои выше остаются в кэше
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
