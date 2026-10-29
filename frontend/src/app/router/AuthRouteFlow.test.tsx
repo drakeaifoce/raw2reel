@@ -225,6 +225,85 @@ describe('identity route flow', () => {
     expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-guest')
   })
 
+  test('waits for a replacement session refetch before completing guest entry', async () => {
+    const entrySessionResponse = deferred<Response>()
+    const replacementSessionResponse = deferred<Response>()
+    let sessionReads = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.includes('/get-session')) {
+        sessionReads += 1
+        return sessionReads === 1
+          ? entrySessionResponse.promise
+          : replacementSessionResponse.promise
+      }
+      if (url.endsWith('/identity/web/guest')) {
+        return json({ accessToken: 'guest-access' }, 201)
+      }
+      return json({}, 404)
+    })
+    authClient.$store.atoms.session!.set({
+      ...authClient.$store.atoms.session!.get(),
+      data: registeredSession,
+      isPending: false,
+    })
+
+    let entrySettled = false
+    const guestEntry = identityClient.startGuest().finally(() => {
+      entrySettled = true
+    })
+    await vi.waitFor(() => expect(sessionReads).toBe(1))
+    const replacementRefetch = authClient.$store.atoms.session!.get().refetch()
+    await vi.waitFor(() => expect(sessionReads).toBe(2))
+
+    entrySessionResponse.resolve(json(guestSession))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(entrySettled).toBe(false)
+    expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-registered')
+
+    replacementSessionResponse.resolve(json(guestSession))
+    await replacementRefetch
+    expect((await guestEntry).ok).toBe(true)
+    expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-guest')
+  })
+
+  test('fails guest entry when its replacement session refetch fails', async () => {
+    const entrySessionResponse = deferred<Response>()
+    const replacementSessionResponse = deferred<Response>()
+    let sessionReads = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.includes('/get-session')) {
+        sessionReads += 1
+        return sessionReads === 1
+          ? entrySessionResponse.promise
+          : replacementSessionResponse.promise
+      }
+      if (url.endsWith('/identity/web/guest')) {
+        return json({ accessToken: 'guest-access' }, 201)
+      }
+      return json({}, 404)
+    })
+    authClient.$store.atoms.session!.set({
+      ...authClient.$store.atoms.session!.get(),
+      data: registeredSession,
+      isPending: false,
+    })
+
+    const guestEntry = identityClient.startGuest()
+    await vi.waitFor(() => expect(sessionReads).toBe(1))
+    const replacementRefetch = authClient.$store.atoms.session!.get().refetch()
+    await vi.waitFor(() => expect(sessionReads).toBe(2))
+    entrySessionResponse.resolve(json(guestSession))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(authClient.$store.atoms.session!.get().error).toBeNull()
+    replacementSessionResponse.resolve(json({ message: 'unavailable' }, 503))
+
+    await replacementRefetch
+    await expect(guestEntry).rejects.toBeDefined()
+    expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-registered')
+  })
+
   test('clears local authentication when the session read fails after successful logout', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href

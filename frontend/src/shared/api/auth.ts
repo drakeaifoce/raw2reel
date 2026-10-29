@@ -15,8 +15,18 @@ let accessToken: string | undefined
 const synchronizeSession = async () => {
   const session = authClient.$store.atoms.session!
   await session.get().refetch()
-  const result = session.get()
+  const result = await new Promise<ReturnType<typeof session.get>>((resolve) => {
+    const settle = (state: ReturnType<typeof session.get>) => {
+      if (!state.isRefetching) {
+        unsubscribe()
+        resolve(state)
+      }
+    }
+    const unsubscribe = session.listen(settle)
+    settle(session.get())
+  })
   if (result.error) throw result.error
+  if (!result.data) throw new Error('Session synchronization did not return an authenticated user')
 }
 
 const clearSession = async () => {
@@ -35,8 +45,9 @@ const rememberAccess = async (response: Response) => {
   if (response.ok) {
     const body = (await response.clone().json()) as { accessToken?: unknown }
     if (typeof body.accessToken === 'string') {
-      accessToken = body.accessToken
+      accessToken = undefined
       await synchronizeSession()
+      accessToken = body.accessToken
     }
   }
   return response
