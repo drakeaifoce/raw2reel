@@ -4,18 +4,17 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { SignInForm } from './SignInForm'
 
 const auth = vi.hoisted(() => ({
-  signIn: vi.fn(),
-  signInAnonymous: vi.fn(),
+  identitySignIn: vi.fn(),
   startGuest: vi.fn(),
-  signUp: vi.fn(),
+  identitySignUp: vi.fn(),
 }))
 
 vi.mock('@/shared/api', () => ({
-  authClient: {
-    signIn: { email: auth.signIn, anonymous: auth.signInAnonymous },
-    signUp: { email: auth.signUp },
+  identityClient: {
+    signIn: auth.identitySignIn,
+    signUp: auth.identitySignUp,
+    startGuest: auth.startGuest,
   },
-  identityClient: { startGuest: auth.startGuest },
 }))
 
 afterEach(() => {
@@ -47,7 +46,7 @@ describe('SignInForm', () => {
   })
 
   test('signs in with email and password, then opens the studio', async () => {
-    auth.signIn.mockResolvedValue({ data: {}, error: null })
+    auth.identitySignIn.mockResolvedValue({ ok: true })
     renderForm()
 
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } })
@@ -55,7 +54,7 @@ describe('SignInForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
 
     await waitFor(() =>
-      expect(auth.signIn).toHaveBeenCalledWith({
+      expect(auth.identitySignIn).toHaveBeenCalledWith({
         email: 'editor@example.com',
         password: 'correct-password',
       }),
@@ -64,7 +63,7 @@ describe('SignInForm', () => {
   })
 
   test('creates an account with name, email and password', async () => {
-    auth.signUp.mockResolvedValue({ data: {}, error: null })
+    auth.identitySignUp.mockResolvedValue({ ok: true, status: 202 })
     renderForm()
 
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
@@ -74,16 +73,20 @@ describe('SignInForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     await waitFor(() =>
-      expect(auth.signUp).toHaveBeenCalledWith({
+      expect(auth.identitySignUp).toHaveBeenCalledWith({
         name: 'Editor',
         email: 'editor@example.com',
         password: 'correct-password',
       }),
     )
+    expect(screen.queryByText('Studio opened')).toBeNull()
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Account creation started. Sign in when registration is complete.',
+    )
   })
 
   test('shows a generic error for invalid credentials', async () => {
-    auth.signIn.mockResolvedValue({ data: null, error: { message: 'specific internal error' } })
+    auth.identitySignIn.mockResolvedValue(new Response(null, { status: 401 }))
     renderForm()
 
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } })

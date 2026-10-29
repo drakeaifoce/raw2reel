@@ -40,8 +40,10 @@ test('redirects a guest away from the studio', () => {
   expect(screen.queryByText('Private studio')).toBeNull()
 })
 
-test('renders the studio for a restored session', () => {
+test('restores identity access before opening a registered studio', async () => {
   session.value = { user: { id: 'user-1', email: 'editor@example.com' } }
+  identity.accessToken.mockReturnValue(undefined)
+  identity.refresh.mockResolvedValue({ ok: true })
   render(
     <MemoryRouter initialEntries={['/studio']}>
       <ProtectedRoute>
@@ -50,7 +52,9 @@ test('renders the studio for a restored session', () => {
     </MemoryRouter>,
   )
 
-  expect(screen.getByText('Private studio')).toBeDefined()
+  expect(screen.getByText('Checking your session…')).toBeDefined()
+  expect(await screen.findByText('Private studio')).toBeDefined()
+  expect(identity.refresh).toHaveBeenCalledOnce()
 })
 
 test('restores the identity access token before opening a guest studio', async () => {

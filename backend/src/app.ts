@@ -499,10 +499,11 @@ export async function handle(
     return pair ? json(pair) : identityError('INVALID_CREDENTIAL', 401)
   }
 
-  if (pathname === '/identity/web/csrf' && request.method === 'GET') {
+  if (pathname === '/identity/web/csrf' && request.method === 'POST') {
     if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
       return identityError('ORIGIN_REJECTED', 403)
     }
+    if (!(await isEmptyJson(request))) return identityError('INVALID_REQUEST', 400)
     const token = readRefreshCookie(request)
     if (!token) return identityError('INVALID_CREDENTIAL', 401)
     const csrfToken = await dependencies.identity!.refreshCsrfToken(token)

@@ -21,10 +21,20 @@ const rememberAccess = async (response: Response) => {
 }
 
 export const identityClient = {
+  signIn: (credentials: { email: string; password: string }) =>
+    identityRequest('/api/identity/web/sign-in', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    }).then(rememberAccess),
+  signUp: (input: { email: string; password: string; name: string }) =>
+    identityRequest('/api/identity/web/sign-up', {
+      method: 'POST',
+      body: JSON.stringify({ ...input, mode: 'new' }),
+    }),
   startGuest: () =>
     identityRequest('/api/identity/web/guest', { method: 'POST', body: '{}' }).then(rememberAccess),
   async refresh() {
-    const csrf = await identityRequest('/api/identity/web/csrf')
+    const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
     if (!csrf.ok) return csrf
     const { csrfToken } = (await csrf.json()) as { csrfToken: string }
     return identityRequest('/api/identity/web/refresh', {
@@ -35,7 +45,7 @@ export const identityClient = {
   },
   accessToken: () => accessToken,
   async signOut() {
-    const csrf = await identityRequest('/api/identity/web/csrf')
+    const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
     if (!csrf.ok) return csrf
     const { csrfToken } = (await csrf.json()) as { csrfToken: string }
     const response = await identityRequest('/api/identity/web/logout', {

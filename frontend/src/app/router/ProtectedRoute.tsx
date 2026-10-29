@@ -5,12 +5,11 @@ import { authClient, identityClient } from '@/shared/api'
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { data: session, isPending } = authClient.useSession()
-  const isGuest = session?.user.isAnonymous === true
   const [identityState, setIdentityState] = useState<'pending' | 'ready' | 'invalid'>('pending')
   const hasAccessToken = Boolean(identityClient.accessToken())
 
   useEffect(() => {
-    if (!isGuest || hasAccessToken) return
+    if (!session || hasAccessToken) return
     let active = true
     void identityClient.refresh().then((response) => {
       if (active) setIdentityState(response.ok ? 'ready' : 'invalid')
@@ -18,12 +17,12 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return () => {
       active = false
     }
-  }, [hasAccessToken, isGuest])
+  }, [hasAccessToken, session])
 
-  if (isPending || (isGuest && !hasAccessToken && identityState === 'pending')) {
+  if (isPending || (session && !hasAccessToken && identityState === 'pending')) {
     return <main aria-busy="true">Checking your session…</main>
   }
-  if (!session || (isGuest && identityState === 'invalid')) {
+  if (!session || identityState === 'invalid') {
     return <Navigate to={routes.login} replace />
   }
   return children

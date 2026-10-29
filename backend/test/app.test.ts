@@ -389,8 +389,9 @@ describe('/identity/web refresh transport', () => {
 
     const bootstrap = await handle(
       new Request('http://localhost/identity/web/csrf', {
-        method: 'GET',
-        headers: { cookie, origin },
+        method: 'POST',
+        headers: { cookie, origin, 'content-type': 'application/json' },
+        body: '{}',
       }),
       dependencies,
     )
@@ -442,12 +443,24 @@ describe('/identity/web refresh transport', () => {
     const rotatedCookie = refreshed.headers.get('set-cookie')!.split(';', 1)[0]!
     const revokedFamily = await handle(
       new Request('http://localhost/identity/web/csrf', {
-        method: 'GET',
-        headers: { cookie: rotatedCookie, origin },
+        method: 'POST',
+        headers: { cookie: rotatedCookie, origin, 'content-type': 'application/json' },
+        body: '{}',
       }),
       dependencies,
     )
     expect(revokedFamily.status).toBe(401)
+  })
+
+  test('rejects browser-style GET bootstrap without relying on an Origin header', async () => {
+    const { identity, pair } = await identityFixture()
+    const response = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        headers: { cookie: `__Host-r2r-refresh=${pair.refreshToken}` },
+      }),
+      { identity, identityWebOrigins: [origin] },
+    )
+    expect(response.status).toBe(404)
   })
 
   test('rejects missing or untrusted origin, invalid CSRF, and malformed web bodies', async () => {

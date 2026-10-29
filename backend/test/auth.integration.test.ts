@@ -24,6 +24,99 @@ const sessionCookie = (response: Response) => {
 }
 
 describe('Better Auth lifecycle', () => {
+  test('registered web entry can authorize, reload through refresh, and logout', async () => {
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const dependencies = { auth, identity, identityWebOrigins: [origin] }
+
+    const signup = await auth.handler(
+      request('/sign-up/email', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Registered Editor',
+          email: 'registered@example.com',
+          password: 'Password1!',
+        }),
+      }),
+    )
+    const setupCookie = sessionCookie(signup)
+    await auth.handler(request('/sign-out', { method: 'POST', headers: { cookie: setupCookie } }))
+
+    const entered = await handle(
+      new Request(`${origin}/identity/web/sign-in`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'registered@example.com', password: 'Password1!' }),
+      }),
+      dependencies,
+    )
+    expect(entered.status).toBe(200)
+    const enteredCookies = entered.headers
+      .getSetCookie()
+      .map((value) => value.split(';', 1)[0])
+      .filter((value): value is string => value !== undefined)
+    const authCookie = enteredCookies.find((value) => !value.startsWith('__Host-r2r-refresh='))!
+    const refreshCookie = enteredCookies.find((value) => value.startsWith('__Host-r2r-refresh='))!
+    const authorized = await requireSession(
+      new Request(`${origin}/media`, { headers: { cookie: enteredCookies.join('; ') } }),
+      auth,
+      identity,
+    )
+    expect(authorized).not.toBeInstanceOf(Response)
+
+    const csrf = await handle(
+      new Request(`${origin}/identity/web/csrf`, {
+        method: 'POST',
+        headers: { origin, cookie: refreshCookie, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(csrf.status).toBe(200)
+    const csrfToken = ((await csrf.json()) as { csrfToken: string }).csrfToken
+    const refreshed = await handle(
+      new Request(`${origin}/identity/web/refresh`, {
+        method: 'POST',
+        headers: {
+          origin,
+          cookie: refreshCookie,
+          'content-type': 'application/json',
+          'x-csrf-token': csrfToken,
+        },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(refreshed.status).toBe(200)
+    const rotatedRefresh = refreshed.headers.get('set-cookie')!.split(';', 1)[0]!
+
+    const logoutCsrf = await handle(
+      new Request(`${origin}/identity/web/csrf`, {
+        method: 'POST',
+        headers: { origin, cookie: rotatedRefresh, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    const logoutCsrfToken = ((await logoutCsrf.json()) as { csrfToken: string }).csrfToken
+    const logout = await handle(
+      new Request(`${origin}/identity/web/logout`, {
+        method: 'POST',
+        headers: {
+          origin,
+          cookie: `${authCookie}; ${rotatedRefresh}`,
+          'content-type': 'application/json',
+          'x-csrf-token': logoutCsrfToken,
+        },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(logout.status).toBe(204)
+    expect(await auth.getSession(new Headers({ cookie: authCookie }))).toBeNull()
+  })
+
   test('routes guest issuance and logout through the identity lifecycle', async () => {
     const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
     const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
