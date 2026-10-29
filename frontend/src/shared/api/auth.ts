@@ -13,16 +13,22 @@ const identityRequest = (path: string, init: RequestInit = {}) =>
 let accessToken: string | undefined
 
 const synchronizeSession = async () => {
-  const result = await authClient.getSession()
+  const session = authClient.$store.atoms.session!
+  await session.get().refetch()
+  const result = session.get()
   if (result.error) throw result.error
+}
+
+const clearSession = async () => {
   const session = authClient.$store.atoms.session!
   session.set({
     ...session.get(),
-    data: result.data,
+    data: null,
     error: null,
     isPending: false,
     isRefetching: false,
   })
+  await session.get().refetch()
 }
 
 const rememberAccess = async (response: Response) => {
@@ -71,7 +77,7 @@ export const identityClient = {
     })
     if (response.ok) {
       accessToken = undefined
-      await synchronizeSession()
+      await clearSession()
     }
     return response
   },

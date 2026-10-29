@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { SignInForm } from '@/features/sign-in'
 import { SignOutLink } from '@/features/sign-out'
-import { authClient } from '@/shared/api'
+import { authClient, identityClient } from '@/shared/api'
 import { ProtectedRoute } from './ProtectedRoute'
 
 const fetchMock = vi.hoisted(() => {
@@ -78,6 +78,14 @@ function resetSession() {
     isPending: false,
     isRefetching: false,
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }
 
 describe('identity route flow', () => {
@@ -161,5 +169,80 @@ describe('identity route flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue as guest' }))
     expect(await screen.findByText('Studio opened')).toBeDefined()
     expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-guest')
+  })
+
+  test('does not let an older session refetch restore an account after logout', async () => {
+    const oldSessionResponse = deferred<Response>()
+    let sessionReads = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.includes('/get-session')) {
+        sessionReads += 1
+        return sessionReads === 1 ? oldSessionResponse.promise : json(null)
+      }
+      if (url.endsWith('/identity/web/csrf')) return json({ csrfToken: 'csrf-token' })
+      if (url.endsWith('/identity/web/logout')) return new Response(null, { status: 204 })
+      return json({}, 404)
+    })
+    authClient.$store.atoms.session!.set({
+      ...authClient.$store.atoms.session!.get(),
+      data: registeredSession,
+      isPending: false,
+    })
+
+    const olderRefetch = authClient.$store.atoms.session!.get().refetch()
+    await vi.waitFor(() => expect(sessionReads).toBe(1))
+    const logout = await identityClient.signOut()
+    expect(logout.ok).toBe(true)
+
+    oldSessionResponse.resolve(json(registeredSession))
+    await olderRefetch
+    expect(authClient.$store.atoms.session!.get().data).toBeNull()
+  })
+
+  test('does not let an older null session overwrite a later guest entry', async () => {
+    const oldSessionResponse = deferred<Response>()
+    let sessionReads = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.includes('/get-session')) {
+        sessionReads += 1
+        return sessionReads === 1 ? oldSessionResponse.promise : json(guestSession)
+      }
+      if (url.endsWith('/identity/web/guest')) {
+        return json({ accessToken: 'guest-access' }, 201)
+      }
+      return json({}, 404)
+    })
+
+    const olderRefetch = authClient.$store.atoms.session!.get().refetch()
+    await vi.waitFor(() => expect(sessionReads).toBe(1))
+    const guestEntry = await identityClient.startGuest()
+    expect(guestEntry.ok).toBe(true)
+
+    oldSessionResponse.resolve(json(null))
+    await olderRefetch
+    expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-guest')
+  })
+
+  test('clears local authentication when the session read fails after successful logout', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.includes('/get-session')) return json({ message: 'unavailable' }, 503)
+      if (url.endsWith('/identity/web/csrf')) return json({ csrfToken: 'csrf-token' })
+      if (url.endsWith('/identity/web/logout')) return new Response(null, { status: 204 })
+      return json({}, 404)
+    })
+    authClient.$store.atoms.session!.set({
+      ...authClient.$store.atoms.session!.get(),
+      data: registeredSession,
+      isPending: false,
+    })
+
+    const logout = await identityClient.signOut()
+
+    expect(logout.ok).toBe(true)
+    expect(identityClient.accessToken()).toBeUndefined()
+    expect(authClient.$store.atoms.session!.get().data).toBeNull()
   })
 })
