@@ -45,6 +45,11 @@ export function createAuthServiceWithDatabase(
     basePath: '/api/auth',
     trustedOrigins: [baseUrl.origin, ...(options.trustedOrigins ?? [])],
     emailAndPassword: { enabled: true },
+    user: {
+      additionalFields: {
+        registrationOperationId: { type: 'string', required: false, input: true },
+      },
+    },
     plugins: [
       anonymous({
         // Guest lifecycle is owned by the explicit, fenced cleanup process.
@@ -84,7 +89,18 @@ export function createAuthServiceWithDatabase(
     getSession: async (headers) => {
       const result = await auth.api.getSession({ headers })
       return result
-        ? { user: result.user, sessionToken: (result.session as { token?: string }).token }
+        ? {
+            user: {
+              id: result.user.id,
+              email: result.user.email,
+              name: result.user.name,
+              isAnonymous: result.user.isAnonymous,
+              ...(typeof result.user.registrationOperationId === 'string'
+                ? { registrationOperationId: result.user.registrationOperationId }
+                : {}),
+            },
+            sessionToken: (result.session as { token?: string }).token,
+          }
         : null
     },
     createGuest: async (headers) => {
@@ -100,7 +116,7 @@ export function createAuthServiceWithDatabase(
       if (!response.ok) return null
       const body = (await response.json()) as {
         token?: unknown
-        user?: { id?: unknown; isAnonymous?: unknown }
+        user?: { id?: unknown; isAnonymous?: unknown; registrationOperationId?: unknown }
       }
       const sessionCookie = response.headers.get('set-cookie')
       if (
@@ -130,7 +146,7 @@ export function createAuthServiceWithDatabase(
       if (!response.ok) return null
       const body = (await response.json()) as {
         token?: unknown
-        user?: { id?: unknown; isAnonymous?: unknown }
+        user?: { id?: unknown; isAnonymous?: unknown; registrationOperationId?: unknown }
       }
       const sessionCookie = response.headers.get('set-cookie')
       if (
@@ -142,7 +158,13 @@ export function createAuthServiceWithDatabase(
         return null
       }
       return {
-        user: { id: body.user.id, isAnonymous: false },
+        user: {
+          id: body.user.id,
+          isAnonymous: false,
+          ...(typeof body.user.registrationOperationId === 'string'
+            ? { registrationOperationId: body.user.registrationOperationId }
+            : {}),
+        },
         sessionToken: body.token,
         sessionCookie,
       }
@@ -156,13 +178,22 @@ export function createAuthServiceWithDatabase(
         }),
       )
       if (!response.ok) return null
-      const body = (await response.json()) as { token?: unknown; user?: { id?: unknown } }
+      const body = (await response.json()) as {
+        token?: unknown
+        user?: { id?: unknown; registrationOperationId?: unknown }
+      }
       const sessionCookie = response.headers.get('set-cookie')
       if (typeof body.token !== 'string' || typeof body.user?.id !== 'string' || !sessionCookie) {
         return null
       }
       return {
-        user: { id: body.user.id, isAnonymous: false },
+        user: {
+          id: body.user.id,
+          isAnonymous: false,
+          ...(typeof body.user.registrationOperationId === 'string'
+            ? { registrationOperationId: body.user.registrationOperationId }
+            : {}),
+        },
         sessionToken: body.token,
         sessionCookie,
       }

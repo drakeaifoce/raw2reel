@@ -14,6 +14,7 @@ export type AuthenticatedUser = {
   email?: string
   name?: string
   isAnonymous?: boolean | null
+  registrationOperationId?: string
 }
 
 export type AuthSession = { user: AuthenticatedUser; sessionToken?: string }
@@ -40,6 +41,7 @@ export interface AuthService {
     email: string
     password: string
     name: string
+    registrationOperationId: string
   }): Promise<RegisteredAuthSession | null>
   signOut?(headers: Headers): Promise<Response>
 }
@@ -58,7 +60,11 @@ export interface RegistrationService {
    * Persists the registration operation before performing account or ownership
    * effects. Completion and recovery are owned by the AVI-340 integration.
    */
-  signUp(input: RegistrationInput): Promise<{ status: 'accepted' }>
+  signUp(input: RegistrationInput): Promise<{
+    status: 'completed'
+    session: RegisteredAuthSession
+    tokens: TokenPair
+  }>
 }
 
 const json = (body: unknown, status = 200) =>
@@ -239,18 +245,28 @@ const acceptRegistration = async (
   registration: RegistrationService,
   body: SignUpBody,
   guest?: { operationId: string; principal: Principal },
+  web = false,
 ) => {
-  await registration.signUp({
+  const result = await registration.signUp({
     ...body,
     ...(guest ? { operationId: guest.operationId, guest: guest.principal } : {}),
   })
-  return json(
+  const response = json(
     {
-      status: 'accepted',
+      status: result.status,
       ...(guest ? { operationId: guest.operationId } : {}),
+      ...(web ? webTokenBody(result.tokens) : result.tokens),
     },
-    202,
+    200,
   )
+  if (web) {
+    response.headers.append('set-cookie', result.session.sessionCookie)
+    response.headers.append(
+      'set-cookie',
+      refreshCookie(result.tokens.refreshToken, result.tokens.refreshExpiresAt),
+    )
+  }
+  return response
 }
 
 export async function requireSession(
@@ -476,7 +492,7 @@ export async function handle(
           : Boolean(await dependencies.identity!.authenticateAccess(credential))
         return identityError(valid ? 'ACCOUNT_TRANSITION' : 'INVALID_CREDENTIAL', valid ? 409 : 401)
       }
-      return acceptRegistration(dependencies.registration, body)
+      return acceptRegistration(dependencies.registration, body, undefined, isWeb)
     }
 
     if (isWeb) {
@@ -492,10 +508,12 @@ export async function handle(
           ? identityError('INVALID_CREDENTIAL', 401)
           : identityError('ACCOUNT_TRANSITION', 409)
       }
-      return acceptRegistration(dependencies.registration, body, {
-        operationId: claim.operationId,
-        principal: claim.principal,
-      })
+      return acceptRegistration(
+        dependencies.registration,
+        body,
+        { operationId: claim.operationId, principal: claim.principal },
+        true,
+      )
     }
 
     const accessToken = bearerToken(request)

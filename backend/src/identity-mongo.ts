@@ -180,7 +180,7 @@ export class MongoIdentityRepository implements IdentityRepository {
   }
 
   async completeUpgrade(userId: string, operationId: string) {
-    return (
+    const completed =
       (await this.owners.findOneAndUpdate(
         {
           _id: userId,
@@ -191,6 +191,14 @@ export class MongoIdentityRepository implements IdentityRepository {
         { $set: { state: 'deleted' }, $inc: { credentialEpoch: 1 } },
         { returnDocument: 'after' },
       )) !== null
+    if (completed) return true
+    return Boolean(
+      await this.owners.findOne({
+        _id: userId,
+        kind: 'guest',
+        state: 'deleted',
+        upgradeOperationId: operationId,
+      }),
     )
   }
 

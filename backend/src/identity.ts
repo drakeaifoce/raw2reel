@@ -155,6 +155,13 @@ export class MemoryIdentityStore implements IdentityRepository {
   async completeUpgrade(userId: string, operationId: string) {
     const owner = this.owners.get(userId)
     if (
+      owner?.kind === 'guest' &&
+      owner.state === 'deleted' &&
+      owner.upgradeOperationId === operationId
+    ) {
+      return true
+    }
+    if (
       !owner ||
       owner.kind !== 'guest' ||
       owner.state !== 'upgrading' ||
@@ -313,7 +320,7 @@ export class IdentityService {
       found.reused ||
       found.family.revokedAt !== undefined ||
       found.family.absoluteExpiresAt <= now ||
-      found.owner.state !== 'active' ||
+      (found.owner.state !== 'active' && found.owner.state !== 'upgrading') ||
       found.owner.credentialEpoch !== found.family.credentialEpoch
     ) {
       return null
@@ -375,7 +382,7 @@ export class IdentityService {
     const now = this.now().getTime()
     const found = await this.store.findAccess(hash, now)
     if (!found) return { status: 'invalid' }
-    const resumed = this.resumedUpgrade(found.owner, found.family)
+    const resumed = this.resumedUpgrade(found.owner, found.family, now)
     if (resumed) return resumed
     if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
     if (found.owner.kind !== 'guest') return { status: 'transition' }
@@ -391,7 +398,7 @@ export class IdentityService {
       await this.store.revokeReuse(found.family.familyId, hash, now)
       return { status: 'invalid' }
     }
-    const resumed = this.resumedUpgrade(found.owner, found.family)
+    const resumed = this.resumedUpgrade(found.owner, found.family, now)
     if (resumed) return resumed
     if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
     if (found.owner.kind !== 'guest') return { status: 'transition' }
@@ -447,13 +454,18 @@ export class IdentityService {
     }
   }
 
-  private resumedUpgrade(owner: IdentityOwner, family: IdentityFamily): UpgradeClaim | undefined {
+  private resumedUpgrade(
+    owner: IdentityOwner,
+    family: IdentityFamily,
+    now: number,
+  ): UpgradeClaim | undefined {
     if (
       owner.kind === 'guest' &&
       owner.state === 'upgrading' &&
       owner.upgradeOperationId &&
       owner.credentialEpoch === family.credentialEpoch &&
-      family.revokedAt === undefined
+      family.revokedAt === undefined &&
+      family.absoluteExpiresAt > now
     ) {
       return {
         status: 'claimed',

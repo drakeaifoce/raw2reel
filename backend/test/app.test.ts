@@ -506,6 +506,23 @@ describe('/identity sign-up transport', () => {
     name: 'Guest Editor',
     mode: 'upgrade' as const,
   }
+  const completedRegistration = () => ({
+    status: 'completed' as const,
+    session: {
+      user: { id: 'registered-signup', isAnonymous: false as const },
+      sessionToken: 'registered-session',
+      sessionCookie: 'better-auth.session_token=registered; HttpOnly; Path=/',
+    },
+    tokens: {
+      accessToken: 'registered-access',
+      refreshToken: 'registered-refresh',
+      familyId: 'registered-family',
+      expiresIn: 900,
+      refreshExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      tokenType: 'Bearer' as const,
+      user: { id: 'registered-signup', isAnonymous: false },
+    },
+  })
 
   const identityFixture = async () => {
     const identity = new IdentityService(new MemoryIdentityStore(), {
@@ -534,13 +551,13 @@ describe('/identity sign-up transport', () => {
         registration: {
           signUp: async (input) => {
             received = input
-            return { status: 'accepted' as const }
+            return completedRegistration()
           },
         },
       },
     )
 
-    expect(response.status).toBe(202)
+    expect(response.status).toBe(200)
     expect(received).toMatchObject({
       email: credentials.email,
       name: credentials.name,
@@ -574,18 +591,69 @@ describe('/identity sign-up transport', () => {
         registration: {
           signUp: async (input) => {
             received = input
-            return { status: 'accepted' as const }
+            return completedRegistration()
           },
         },
       },
     )
 
-    expect(response.status).toBe(202)
-    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(response.status).toBe(200)
+    expect(response.headers.getSetCookie()).toHaveLength(2)
     expect(received).toMatchObject({
       mode: 'upgrade',
       guest: { userId: 'guest-signup', familyId: pair.familyId },
     })
+  })
+
+  test('retries a claimed web upgrade with the same protected guest credential', async () => {
+    const { identity, pair } = await identityFixture()
+    const cookie = `__Host-r2r-refresh=${pair.refreshToken}`
+    const csrf = await identity.refreshCsrfToken(pair.refreshToken)
+    let attempts = 0
+    let operationId: string | undefined
+    const registration = {
+      signUp: async (
+        input: Parameters<NonNullable<AppDependencies['registration']>['signUp']>[0],
+      ) => {
+        attempts += 1
+        operationId ??= input.operationId
+        expect(input.operationId).toBe(operationId)
+        if (attempts === 1) throw new Error('temporary transfer failure')
+        return completedRegistration()
+      },
+    }
+    const request = () =>
+      new Request('http://localhost/identity/web/sign-up', {
+        method: 'POST',
+        headers: {
+          cookie,
+          origin,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: JSON.stringify(credentials),
+      })
+
+    await expect(
+      handle(request(), { identity, identityWebOrigins: [origin], registration }),
+    ).rejects.toThrow('temporary transfer failure')
+    const csrfRecovery = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'POST',
+        headers: { cookie, origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { identity, identityWebOrigins: [origin] },
+    )
+    expect(csrfRecovery.status).toBe(200)
+
+    const recovered = await handle(request(), {
+      identity,
+      identityWebOrigins: [origin],
+      registration,
+    })
+    expect(recovered.status).toBe(200)
+    expect(attempts).toBe(2)
   })
 
   test('rejects ambiguous transport and client-controlled identity before registration', async () => {
@@ -594,7 +662,7 @@ describe('/identity sign-up transport', () => {
     const registration = {
       signUp: async () => {
         calls += 1
-        return { status: 'accepted' as const }
+        return completedRegistration()
       },
     }
     const attempts = [

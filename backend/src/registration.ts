@@ -1,7 +1,12 @@
 import { MongoClient, type Collection } from 'mongodb'
-import type { AuthService, RegistrationInput, RegistrationService } from './app'
+import type {
+  AuthService,
+  RegisteredAuthSession,
+  RegistrationInput,
+  RegistrationService,
+} from './app'
 import type { Config } from './config'
-import type { IdentityService } from './identity'
+import type { IdentityService, TokenPair } from './identity'
 import type { MediaRepository } from './media'
 
 type RegistrationOperation = {
@@ -11,7 +16,7 @@ type RegistrationOperation = {
   name: string
   guestOwnerId?: string
   registeredOwnerId?: string
-  state: 'started' | 'account-created' | 'media-transferred' | 'completed'
+  state: 'started' | 'account-created' | 'media-transferred' | 'completion-recorded' | 'completed'
   createdAt: string
   updatedAt: string
 }
@@ -56,7 +61,11 @@ export class RegistrationOrchestrator implements RegistrationService {
     private readonly media: MediaRepository,
   ) {}
 
-  async signUp(input: RegistrationInput): Promise<{ status: 'accepted' }> {
+  async signUp(input: RegistrationInput): Promise<{
+    status: 'completed'
+    session: RegisteredAuthSession
+    tokens: TokenPair
+  }> {
     const operationId = input.operationId ?? crypto.randomUUID()
     const now = new Date().toISOString()
     let operation = await this.operations.start({
@@ -70,24 +79,35 @@ export class RegistrationOrchestrator implements RegistrationService {
       updatedAt: now,
     })
 
+    const credentials = { email: input.email, password: input.password }
+    let session: RegisteredAuthSession | undefined
+    let tokens: TokenPair | undefined
     if (operation.state === 'started') {
-      const credentials = { email: input.email, password: input.password }
       const created = await this.auth.signUpEmail?.({
         email: input.email,
         password: input.password,
         name: input.name,
+        registrationOperationId: operationId,
       })
-      // A process may stop after Better Auth commits the account but before the
-      // operation advances. Verifying the same credentials makes that boundary
-      // recoverable without persisting a password in the operation document.
-      const account = created ?? (await this.auth.signInEmail?.(new Headers(), credentials))
+      // Never turn an existing email/password pair into an implicit linking
+      // operation. Only an account returned by this sign-up attempt can become
+      // the destination owner.
+      const account =
+        created ??
+        (await this.auth
+          .signInEmail?.(new Headers(), credentials)
+          .then((recovered) =>
+            recovered?.user.registrationOperationId === operationId ? recovered : null,
+          ))
       if (!account) throw new Error('registration account creation failed')
-      await this.identity.registerRegistered(account.user.id, account.sessionToken)
-      operation =
-        (await this.operations.advance(operationId, 'started', {
-          state: 'account-created',
-          registeredOwnerId: account.user.id,
-        })) ?? operation
+      session = account
+      tokens = await this.identity.registerRegistered(account.user.id, account.sessionToken)
+      const advanced = await this.operations.advance(operationId, 'started', {
+        state: 'account-created',
+        registeredOwnerId: account.user.id,
+      })
+      if (!advanced) throw new Error('registration account ownership was not recorded')
+      operation = advanced
     }
 
     if (operation.state === 'account-created') {
@@ -108,6 +128,14 @@ export class RegistrationOrchestrator implements RegistrationService {
     }
 
     if (operation.state === 'media-transferred') {
+      const advanced = await this.operations.advance(operationId, 'media-transferred', {
+        state: 'completion-recorded',
+      })
+      if (!advanced) throw new Error('registration completion was not recorded')
+      operation = advanced
+    }
+
+    if (operation.state === 'completion-recorded') {
       if (
         operation.mode === 'upgrade' &&
         operation.guestOwnerId &&
@@ -115,9 +143,23 @@ export class RegistrationOrchestrator implements RegistrationService {
       ) {
         throw new Error('registration identity transition failed')
       }
-      await this.operations.advance(operationId, 'media-transferred', { state: 'completed' })
+      const advanced = await this.operations.advance(operationId, 'completion-recorded', {
+        state: 'completed',
+      })
+      if (!advanced) throw new Error('registration completion could not be finalized')
+      operation = advanced
     }
-    return { status: 'accepted' }
+
+    if (!operation.registeredOwnerId) throw new Error('registration account is unavailable')
+    if (!session || !tokens) {
+      const recovered = await this.auth.signInEmail?.(new Headers(), credentials)
+      if (!recovered || recovered.user.id !== operation.registeredOwnerId) {
+        throw new Error('registration result recovery failed')
+      }
+      session = recovered
+      tokens = await this.identity.registerRegistered(recovered.user.id, recovered.sessionToken)
+    }
+    return { status: 'completed', session, tokens }
   }
 }
 
