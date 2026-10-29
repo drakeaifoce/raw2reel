@@ -24,6 +24,7 @@ export type IdentityFamily = {
   familyId: string
   userId: string
   credentialEpoch: number
+  sessionBindingHash: string
   refreshHash: string
   usedRefreshHashes: Set<string>
   absoluteExpiresAt: number
@@ -185,7 +186,7 @@ export class IdentityService {
     this.refreshLifetimeMs = options.refreshLifetimeMs ?? 30 * 24 * 60 * 60 * 1000
   }
 
-  async registerGuest(userId: string): Promise<TokenPair> {
+  async registerGuest(userId: string, sessionToken = userId): Promise<TokenPair> {
     const now = this.now().getTime()
     const owner: IdentityOwner = {
       userId,
@@ -194,7 +195,7 @@ export class IdentityService {
       lastActiveAt: now,
       credentialEpoch: 0,
     }
-    const created = await this.newFamily(owner, now)
+    const created = await this.newFamily(owner, now, sessionToken)
     await this.store.create({ owner, family: created.family })
     return created.pair
   }
@@ -313,13 +314,14 @@ export class IdentityService {
     )
   }
 
-  private async newFamily(owner: IdentityOwner, now: number) {
+  private async newFamily(owner: IdentityOwner, now: number, sessionToken: string) {
     const accessToken = this.randomToken()
     const refreshToken = this.randomToken()
     const family: IdentityFamily = {
       familyId: this.randomToken(),
       userId: owner.userId,
       credentialEpoch: owner.credentialEpoch,
+      sessionBindingHash: await hashCredential(sessionToken),
       refreshHash: await hashCredential(refreshToken),
       usedRefreshHashes: new Set(),
       absoluteExpiresAt: now + this.refreshLifetimeMs,

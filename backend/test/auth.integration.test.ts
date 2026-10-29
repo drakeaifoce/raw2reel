@@ -22,6 +22,19 @@ const sessionCookie = (response: Response) => {
 }
 
 describe('Better Auth lifecycle', () => {
+  test('creates a server-verifiable guest session for first-party token binding', async () => {
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
+
+    const issued = await auth.createGuest?.(new Headers({ origin, 'x-forwarded-for': '192.0.2.1' }))
+
+    expect(issued).toMatchObject({ user: { isAnonymous: true } })
+    expect(issued?.sessionToken).toBeString()
+    expect(
+      await auth.getSession(new Headers({ cookie: issued?.sessionCookie ?? '' })),
+    ).toMatchObject({ user: { id: issued?.user.id, isAnonymous: true } })
+  })
+
   test('creates isolated anonymous identities and does not expose destructive deletion', async () => {
     const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
     const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)

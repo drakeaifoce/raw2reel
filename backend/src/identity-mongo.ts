@@ -35,6 +35,7 @@ export type IdentityFamilyDocument = {
   _id: string
   userId: string
   credentialEpoch: number
+  sessionBindingHash: string
   generation: number
   currentRefreshHash: string
   usedRefreshHashes: string[]
@@ -47,6 +48,7 @@ type CreateGuestOwner = {
   userId: string
   now: number
   familyId: string
+  sessionBindingHash: string
   refreshHash: string
   absoluteExpiresAt: number
   access: IdentityAccessDocument[]
@@ -75,6 +77,7 @@ export class MongoIdentityRepository implements IdentityRepository {
       userId: owner.userId,
       now: owner.lastActiveAt,
       familyId: family.familyId,
+      sessionBindingHash: family.sessionBindingHash,
       refreshHash: family.refreshHash,
       absoluteExpiresAt: family.absoluteExpiresAt,
       access: family.access,
@@ -162,6 +165,7 @@ export class MongoIdentityRepository implements IdentityRepository {
         _id: input.familyId,
         userId: input.userId,
         credentialEpoch: 0,
+        sessionBindingHash: input.sessionBindingHash,
         generation: 0,
         currentRefreshHash: input.refreshHash,
         usedRefreshHashes: [],
@@ -227,6 +231,7 @@ export class MongoIdentityRepository implements IdentityRepository {
       familyId: family._id,
       userId: family.userId,
       credentialEpoch: family.credentialEpoch,
+      sessionBindingHash: family.sessionBindingHash,
       refreshHash: family.currentRefreshHash,
       usedRefreshHashes: new Set(family.usedRefreshHashes),
       absoluteExpiresAt: family.absoluteExpiresAt,

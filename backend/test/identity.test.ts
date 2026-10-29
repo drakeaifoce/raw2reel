@@ -18,6 +18,19 @@ const fixture = () => {
 }
 
 describe('guest identity credentials', () => {
+  test('binds a newly issued family to the Better Auth session without storing its token', async () => {
+    const store = new MemoryIdentityStore()
+    const service = new IdentityService(store, {
+      randomToken: () => `credential-${crypto.randomUUID()}-${'x'.repeat(40)}`,
+    })
+
+    const pair = await service.registerGuest('guest-bound', 'better-auth-session-secret')
+    const family = store.families.get(pair.familyId)
+
+    expect(family?.sessionBindingHash).toBeString()
+    expect(family?.sessionBindingHash).not.toContain('better-auth-session-secret')
+  })
+
   test('issues isolated pairs and derives the principal only from access credentials', async () => {
     const { service } = fixture()
     const first = await service.registerGuest('guest-a')

@@ -82,5 +82,35 @@ export function createAuthServiceWithDatabase(
   return {
     handler: (request) => auth.handler(request),
     getSession: async (headers) => auth.api.getSession({ headers }),
+    createGuest: async (headers) => {
+      const requestHeaders = new Headers(headers)
+      requestHeaders.set('content-type', 'application/json')
+      const response = await auth.handler(
+        new Request(new URL('/api/auth/sign-in/anonymous', baseUrl.origin).toString(), {
+          method: 'POST',
+          headers: requestHeaders,
+          body: '{}',
+        }),
+      )
+      if (!response.ok) return null
+      const body = (await response.json()) as {
+        token?: unknown
+        user?: { id?: unknown; isAnonymous?: unknown }
+      }
+      const sessionCookie = response.headers.get('set-cookie')
+      if (
+        typeof body.token !== 'string' ||
+        typeof body.user?.id !== 'string' ||
+        body.user.isAnonymous !== true ||
+        !sessionCookie
+      ) {
+        return null
+      }
+      return {
+        user: { id: body.user.id, isAnonymous: true },
+        sessionToken: body.token,
+        sessionCookie,
+      }
+    },
   }
 }

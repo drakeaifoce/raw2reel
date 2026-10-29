@@ -186,6 +186,68 @@ describe('/identity/api transport boundary', () => {
   })
 })
 
+describe('/identity guest entry', () => {
+  const guestAuth = (existing = false) => ({
+    handler: async () => new Response('unused'),
+    getSession: async () =>
+      existing ? { user: { id: 'existing-guest', isAnonymous: true } } : null,
+    createGuest: async () => ({
+      user: { id: 'guest-issued', isAnonymous: true as const },
+      sessionToken: 'better-auth-session-secret',
+      sessionCookie: 'better-auth.session_token=opaque; HttpOnly; SameSite=Lax; Path=/',
+    }),
+  })
+
+  test('issues an API pair from a server-created anonymous Better Auth session', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const response = await handle(
+      new Request('http://localhost/identity/api/guest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth: guestAuth(), identity },
+    )
+
+    expect(response.status).toBe(201)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(await response.json()).toMatchObject({
+      tokenType: 'Bearer',
+      user: { id: 'guest-issued', isAnonymous: true },
+    })
+  })
+
+  test('uses HttpOnly refresh transport for web and rejects an existing session', async () => {
+    const origin = 'https://raw2reel.studio'
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const response = await handle(
+      new Request('http://localhost/identity/web/guest', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth: guestAuth(), identity, identityWebOrigins: [origin] },
+    )
+
+    expect(response.status).toBe(201)
+    expect(response.headers.get('set-cookie')).toContain('__Host-r2r-refresh=')
+    expect(await response.json()).toMatchObject({
+      refreshTransport: 'cookie',
+      user: { id: 'guest-issued', isAnonymous: true },
+    })
+
+    const conflict = await handle(
+      new Request('http://localhost/identity/web/guest', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth: guestAuth(true), identity, identityWebOrigins: [origin] },
+    )
+    expect(conflict.status).toBe(409)
+  })
+})
+
 describe('/identity/web refresh transport', () => {
   const origin = 'https://raw2reel.studio'
   const identityFixture = async () => {

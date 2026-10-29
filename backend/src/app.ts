@@ -16,10 +16,16 @@ export type AuthenticatedUser = {
 }
 
 export type AuthSession = { user: AuthenticatedUser }
+export type GuestAuthSession = {
+  user: AuthenticatedUser & { isAnonymous: true }
+  sessionToken: string
+  sessionCookie: string
+}
 
 export interface AuthService {
   handler(request: Request): Promise<Response>
   getSession(headers: Headers): Promise<AuthSession | null>
+  createGuest?(headers: Headers): Promise<GuestAuthSession | null>
 }
 
 export type RegistrationInput = {
@@ -65,6 +71,7 @@ export type AppDependencies = {
   identity?: Pick<
     IdentityService,
     | 'authenticateAccess'
+    | 'registerGuest'
     | 'refresh'
     | 'refreshCsrfToken'
     | 'matchesRefreshCsrf'
@@ -133,6 +140,15 @@ const webTokenBody = ({ refreshToken: _refreshToken, ...pair }: TokenPair) => ({
 })
 const refreshCookie = (token: string, expiresAt: string) =>
   `${refreshCookieName}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires=${new Date(expiresAt).toUTCString()}`
+const isEmptyJson = async (request: Request) => {
+  if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') return false
+  try {
+    const body: unknown = await request.json()
+    return typeof body === 'object' && body !== null && Object.keys(body).length === 0
+  } catch {
+    return false
+  }
+}
 const isAllowedType = (type: string, allowed: string[]) =>
   allowed.some((pattern) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
@@ -210,6 +226,44 @@ export async function handle(
 
   if (pathname.startsWith('/identity/') && !dependencies.identity) {
     return error('identity service is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+  }
+
+  if (
+    (pathname === '/identity/api/guest' || pathname === '/identity/web/guest') &&
+    request.method === 'POST'
+  ) {
+    const isWeb = pathname === '/identity/web/guest'
+    if (!dependencies.auth) {
+      return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    if (isWeb) {
+      if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+        return identityError('ORIGIN_REJECTED', 403)
+      }
+      if (request.headers.has('authorization')) return identityError('INVALID_REQUEST', 400)
+      if (await dependencies.auth.getSession(request.headers)) {
+        return identityError('SESSION_EXISTS', 409)
+      }
+    } else {
+      const rejected = rejectApiBrowserTransport(request)
+      if (rejected) return rejected
+    }
+    if (!(await isEmptyJson(request))) return identityError('INVALID_REQUEST', 400)
+
+    if (!dependencies.auth.createGuest) {
+      return error('guest authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const guest = await dependencies.auth.createGuest(request.headers)
+    if (!guest?.user.isAnonymous) {
+      return error('guest session could not be created', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const pair = await dependencies.identity!.registerGuest(guest.user.id, guest.sessionToken)
+    if (!isWeb) return json(pair, 201)
+
+    const response = json(webTokenBody(pair), 201)
+    response.headers.append('set-cookie', guest.sessionCookie)
+    response.headers.append('set-cookie', refreshCookie(pair.refreshToken, pair.refreshExpiresAt))
+    return response
   }
 
   if (
