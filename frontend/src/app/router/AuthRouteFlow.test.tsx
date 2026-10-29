@@ -97,6 +97,40 @@ describe('identity route flow', () => {
     resetSession()
   })
 
+  test('retries guest registration after a temporary failure and synchronizes the registered session', async () => {
+    let signupAttempts = 0
+    let csrfRequests = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.endsWith('/identity/web/csrf')) {
+        csrfRequests += 1
+        return json({ csrfToken: `csrf-${csrfRequests}` })
+      }
+      if (url.endsWith('/identity/web/sign-up')) {
+        signupAttempts += 1
+        return signupAttempts === 1
+          ? json({ error: 'temporary transfer failure' }, 503)
+          : json({ accessToken: 'registered-access' })
+      }
+      if (url.includes('/get-session')) return json(registeredSession)
+      return json({}, 404)
+    })
+
+    const input = {
+      email: 'new@example.com',
+      password: 'Password1!',
+      name: 'Editor',
+      upgrade: true,
+    }
+    expect((await identityClient.signUp(input)).status).toBe(503)
+    expect((await identityClient.signUp(input)).status).toBe(200)
+
+    expect(csrfRequests).toBe(2)
+    expect(signupAttempts).toBe(2)
+    expect(identityClient.accessToken()).toBe('registered-access')
+    expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-registered')
+  })
+
   test.each([
     ['registered', registeredSession, 'Sign in'],
     ['guest', guestSession, 'Continue as guest'],

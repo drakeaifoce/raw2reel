@@ -75,7 +75,7 @@ export const identityClient = {
         name: input.name,
         mode: input.upgrade ? 'upgrade' : 'new',
       }),
-    })
+    }).then(rememberAccess)
   },
   startGuest: () =>
     identityRequest('/api/identity/web/guest', { method: 'POST', body: '{}' }).then(rememberAccess),

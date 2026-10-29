@@ -23,8 +23,8 @@ export function GuestRegistration() {
         upgrade: true,
       })
       setMessage(
-        response.status === 202
-          ? 'Account creation started. Your uploads will stay with the new account.'
+        response.ok
+          ? 'Account created. You are signed in and your uploads are ready.'
           : 'Account could not be created. Try again.',
       )
     } catch {

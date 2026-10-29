@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe('GuestRegistration', () => {
   test('requests an authenticated guest upgrade and explains media continuity', async () => {
-    api.signUp.mockResolvedValue(new Response(null, { status: 202 }))
+    api.signUp.mockResolvedValue(new Response(null, { status: 200 }))
     render(<GuestRegistration />)
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Guest Editor' } })
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'guest@example.com' } })
@@ -30,6 +30,6 @@ describe('GuestRegistration', () => {
         upgrade: true,
       }),
     )
-    expect((await screen.findByRole('status')).textContent).toContain('uploads will stay')
+    expect((await screen.findByRole('status')).textContent).toContain('signed in')
   })
 })
