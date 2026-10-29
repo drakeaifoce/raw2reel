@@ -141,6 +141,17 @@ const hashCredential = async (credential: string) => {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+const csrfForRefresh = (refreshToken: string) => hashCredential(`r2r-csrf:${refreshToken}`)
+
+const secureEqual = (left: string, right: string) => {
+  const length = Math.max(left.length, right.length)
+  let difference = left.length ^ right.length
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0)
+  }
+  return difference === 0
+}
+
 export class IdentityService {
   private readonly now: () => Date
   private readonly randomToken: () => string
@@ -215,6 +226,27 @@ export class IdentityService {
       return this.rotate(family, owner, hash, now)
     }
     return null
+  }
+
+  async refreshCsrfToken(refreshToken: string): Promise<string | null> {
+    const hash = await hashCredential(refreshToken)
+    const found = await this.store.findRefresh(hash)
+    const now = this.now().getTime()
+    if (
+      !found ||
+      found.reused ||
+      found.family.revokedAt !== undefined ||
+      found.family.absoluteExpiresAt <= now ||
+      found.owner.state !== 'active' ||
+      found.owner.credentialEpoch !== found.family.credentialEpoch
+    ) {
+      return null
+    }
+    return csrfForRefresh(refreshToken)
+  }
+
+  async matchesRefreshCsrf(refreshToken: string, csrfToken: string): Promise<boolean> {
+    return secureEqual(await csrfForRefresh(refreshToken), csrfToken)
   }
 
   async recordActivity(accessToken: string): Promise<boolean> {

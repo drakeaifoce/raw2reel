@@ -3,7 +3,7 @@ import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
 import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
-import type { IdentityService } from './identity'
+import type { IdentityService, TokenPair } from './identity'
 import { createIdentityService } from './identity-mongo'
 
 export type AuthenticatedUser = {
@@ -45,7 +45,11 @@ export type AppDependencies = {
   database?: DatabaseRepository
   allowedMediaTypes?: string[]
   maxMediaSizeBytes?: number
-  identity?: Pick<IdentityService, 'refresh' | 'recordActivity' | 'revokeAll'>
+  identity?: Pick<
+    IdentityService,
+    'refresh' | 'refreshCsrfToken' | 'matchesRefreshCsrf' | 'recordActivity' | 'revokeAll'
+  >
+  identityWebOrigins?: string[]
 }
 
 const defaultDependencies: AppDependencies = {
@@ -55,6 +59,7 @@ const defaultDependencies: AppDependencies = {
   allowedMediaTypes: config.mediaAllowedTypes,
   maxMediaSizeBytes: config.maxMediaSizeBytes,
   identity: createIdentityService(config),
+  identityWebOrigins: config.betterAuthTrustedOrigins,
 }
 
 const error = (message: string, code: string, status: number) =>
@@ -69,7 +74,9 @@ const identityError = (code: string, status: number) =>
             ? 'invalid request'
             : code === 'ORIGIN_REJECTED'
               ? 'origin rejected'
-              : 'invalid credential',
+              : code === 'CSRF_REJECTED'
+                ? 'csrf rejected'
+                : 'invalid credential',
       },
     },
     status,
@@ -82,6 +89,25 @@ const rejectApiBrowserTransport = (request: Request) => {
   if (request.headers.has('origin')) return identityError('ORIGIN_REJECTED', 403)
   if (request.headers.has('cookie')) return identityError('INVALID_REQUEST', 400)
 }
+const refreshCookieName = '__Host-r2r-refresh'
+const readRefreshCookie = (request: Request) => {
+  const values = (request.headers.get('cookie') ?? '')
+    .split(';')
+    .map((value) => value.trim())
+    .filter((value) => value.startsWith(`${refreshCookieName}=`))
+    .map((value) => value.slice(refreshCookieName.length + 1))
+  return values.length === 1 && values[0] ? values[0] : undefined
+}
+const allowedWebOrigin = (request: Request, origins: string[] | undefined) => {
+  const origin = request.headers.get('origin')
+  return origin !== null && (origins ?? []).includes(origin)
+}
+const webTokenBody = ({ refreshToken: _refreshToken, ...pair }: TokenPair) => ({
+  ...pair,
+  refreshTransport: 'cookie' as const,
+})
+const refreshCookie = (token: string, expiresAt: string) =>
+  `${refreshCookieName}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires=${new Date(expiresAt).toUTCString()}`
 const isAllowedType = (type: string, allowed: string[]) =>
   allowed.some((pattern) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
@@ -139,6 +165,45 @@ export async function handle(
       (body as { refreshToken: string }).refreshToken,
     )
     return pair ? json(pair) : identityError('INVALID_CREDENTIAL', 401)
+  }
+
+  if (pathname === '/identity/web/csrf' && request.method === 'GET') {
+    if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+      return identityError('ORIGIN_REJECTED', 403)
+    }
+    const token = readRefreshCookie(request)
+    if (!token) return identityError('INVALID_CREDENTIAL', 401)
+    const csrfToken = await dependencies.identity!.refreshCsrfToken(token)
+    return csrfToken ? json({ csrfToken }) : identityError('INVALID_CREDENTIAL', 401)
+  }
+
+  if (pathname === '/identity/web/refresh' && request.method === 'POST') {
+    if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+      return identityError('ORIGIN_REJECTED', 403)
+    }
+    if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    if (typeof body !== 'object' || body === null || Object.keys(body).length !== 0) {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    const token = readRefreshCookie(request)
+    const suppliedCsrf = request.headers.get('x-csrf-token')
+    if (!token || !suppliedCsrf) return identityError('CSRF_REJECTED', 403)
+    if (!(await dependencies.identity!.matchesRefreshCsrf(token, suppliedCsrf))) {
+      return identityError('CSRF_REJECTED', 403)
+    }
+    const pair = await dependencies.identity!.refresh(token)
+    if (!pair) return identityError('INVALID_CREDENTIAL', 401)
+    const response = json(webTokenBody(pair))
+    response.headers.set('set-cookie', refreshCookie(pair.refreshToken, pair.refreshExpiresAt))
+    return response
   }
 
   if (

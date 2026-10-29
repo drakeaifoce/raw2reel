@@ -185,3 +185,118 @@ describe('/identity/api transport boundary', () => {
     expect(afterRevoke.status).toBe(401)
   })
 })
+
+describe('/identity/web refresh transport', () => {
+  const origin = 'https://raw2reel.studio'
+  const identityFixture = async () => {
+    const identity = new IdentityService(new MemoryIdentityStore(), {
+      randomToken: (() => {
+        let sequence = 0
+        return () => `web-credential-${++sequence}-${'x'.repeat(40)}`
+      })(),
+    })
+    return { identity, pair: await identity.registerGuest('guest-web') }
+  }
+
+  test('bootstraps family-bound CSRF and rotates an HttpOnly refresh cookie', async () => {
+    const { identity, pair } = await identityFixture()
+    const dependencies = { identity, identityWebOrigins: [origin] }
+    const cookie = `__Host-r2r-refresh=${pair.refreshToken}`
+
+    const bootstrap = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'GET',
+        headers: { cookie, origin },
+      }),
+      dependencies,
+    )
+    expect(bootstrap.status).toBe(200)
+    const { csrfToken } = (await bootstrap.json()) as { csrfToken: string }
+    expect(csrfToken).toBeString()
+
+    const refreshed = await handle(
+      new Request('http://localhost/identity/web/refresh', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          origin,
+          'x-csrf-token': csrfToken,
+        },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(refreshed.status).toBe(200)
+    expect(refreshed.headers.get('cache-control')).toBe('no-store')
+    expect(refreshed.headers.get('set-cookie')).toContain('__Host-r2r-refresh=web-credential-')
+    expect(refreshed.headers.get('set-cookie')).toContain('HttpOnly')
+    expect(refreshed.headers.get('set-cookie')).toContain('Secure')
+    expect(refreshed.headers.get('set-cookie')).toContain('SameSite=Lax')
+    expect(refreshed.headers.get('set-cookie')).toContain('Path=/')
+    expect(refreshed.headers.get('set-cookie')).not.toContain('Domain=')
+    const body = (await refreshed.json()) as Record<string, unknown>
+    expect(body.refreshToken).toBeUndefined()
+    expect(body.refreshTransport).toBe('cookie')
+    expect(body.accessToken).toBeString()
+
+    const replay = await handle(
+      new Request('http://localhost/identity/web/refresh', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          origin,
+          'x-csrf-token': csrfToken,
+        },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(replay.status).toBe(401)
+
+    const rotatedCookie = refreshed.headers.get('set-cookie')!.split(';', 1)[0]!
+    const revokedFamily = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'GET',
+        headers: { cookie: rotatedCookie, origin },
+      }),
+      dependencies,
+    )
+    expect(revokedFamily.status).toBe(401)
+  })
+
+  test('rejects missing or untrusted origin, invalid CSRF, and malformed web bodies', async () => {
+    const { identity, pair } = await identityFixture()
+    const dependencies = { identity, identityWebOrigins: [origin] }
+    const cookie = `__Host-r2r-refresh=${pair.refreshToken}`
+    const attempts: { headers: Record<string, string>; body: string }[] = [
+      { headers: { cookie, 'content-type': 'application/json' }, body: '{}' },
+      {
+        headers: { cookie, origin: 'https://evil.example', 'content-type': 'application/json' },
+        body: '{}',
+      },
+      {
+        headers: { cookie, origin, 'content-type': 'application/json', 'x-csrf-token': 'wrong' },
+        body: '{}',
+      },
+      {
+        headers: { cookie, origin, 'content-type': 'application/json', 'x-csrf-token': 'wrong' },
+        body: '{"unexpected":true}',
+      },
+    ]
+
+    for (const attempt of attempts) {
+      const response = await handle(
+        new Request('http://localhost/identity/web/refresh', {
+          method: 'POST',
+          headers: attempt.headers,
+          body: attempt.body,
+        }),
+        dependencies,
+      )
+      expect(response.status).toBe(attempt === attempts[3] ? 400 : 403)
+      expect(response.headers.get('set-cookie')).toBeNull()
+    }
+  })
+})
