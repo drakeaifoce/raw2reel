@@ -4,6 +4,7 @@ import { createDatabaseService, type DatabaseRepository } from './database'
 import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
 import type { IdentityService } from './identity'
+import { createIdentityService } from './identity-mongo'
 
 export type AuthenticatedUser = {
   id: string
@@ -53,6 +54,7 @@ const defaultDependencies: AppDependencies = {
   database: createDatabaseService(config),
   allowedMediaTypes: config.mediaAllowedTypes,
   maxMediaSizeBytes: config.maxMediaSizeBytes,
+  identity: createIdentityService(config),
 }
 
 const error = (message: string, code: string, status: number) =>

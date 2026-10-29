@@ -1,4 +1,24 @@
-import type { Collection } from 'mongodb'
+import { MongoClient, type Collection } from 'mongodb'
+import type { Config } from './config'
+import { IdentityService } from './identity'
+import type {
+  CreateIdentity,
+  IdentityAccess,
+  IdentityFamily,
+  IdentityOwner,
+  IdentityRepository,
+} from './identity'
+
+export function createIdentityService(config: Config): IdentityService | undefined {
+  if (!config.mongoUrl) return undefined
+  const database = new MongoClient(config.mongoUrl).db(config.mongoDb)
+  return new IdentityService(
+    new MongoIdentityRepository(
+      database.collection<IdentityOwnerDocument>('identityOwners'),
+      database.collection<IdentityFamilyDocument>('identityFamilies'),
+    ),
+  )
+}
 
 export type IdentityAccessDocument = { hash: string; expiresAt: number }
 
@@ -43,11 +63,80 @@ type RotateRefresh = {
  * Cosmos Mongo deployments cannot be assumed to support cross-document
  * transactions, so callers must treat owner/family creation as recoverable.
  */
-export class MongoIdentityRepository {
+export class MongoIdentityRepository implements IdentityRepository {
   constructor(
     private readonly owners: Collection<IdentityOwnerDocument>,
     private readonly families: Collection<IdentityFamilyDocument>,
   ) {}
+
+  async create({ owner, family }: CreateIdentity): Promise<void> {
+    await this.createGuestOwner({
+      userId: owner.userId,
+      now: owner.lastActiveAt,
+      familyId: family.familyId,
+      refreshHash: family.refreshHash,
+      absoluteExpiresAt: family.absoluteExpiresAt,
+      access: family.access,
+    })
+  }
+
+  async findAccess(hash: string, now: number) {
+    const family = await this.families.findOne({
+      access: { $elemMatch: { hash, expiresAt: { $gt: now } } },
+    })
+    return family ? this.withOwner(family, false) : null
+  }
+
+  async findRefresh(hash: string) {
+    const family = await this.families.findOne({
+      $or: [{ currentRefreshHash: hash }, { usedRefreshHashes: hash }],
+    })
+    return family ? this.withOwner(family, family.usedRefreshHashes.includes(hash)) : null
+  }
+
+  async rotate(
+    family: IdentityFamily,
+    currentHash: string,
+    nextHash: string,
+    access: IdentityAccess,
+  ) {
+    const rotated = await this.rotateRefresh({
+      generation: this.toDocumentGeneration(family),
+      currentRefreshHash: currentHash,
+      nextRefreshHash: nextHash,
+      nextAccess: access,
+    })
+    return rotated ? this.toFamily(rotated) : null
+  }
+
+  revokeReuse(_familyId: string, hash: string, now: number) {
+    return this.revokeForRefreshReuse(hash, now)
+  }
+
+  async touch(userId: string, now: number) {
+    return (
+      (await this.owners.findOneAndUpdate(
+        { _id: userId, state: 'active' },
+        { $set: { lastActiveAt: now } },
+        { returnDocument: 'after' },
+      )) !== null
+    )
+  }
+
+  async revokeAll(userId: string, epoch: number, now: number) {
+    const owner = await this.compareAndIncrementCredentialEpoch(userId, epoch)
+    if (!owner) return false
+    await this.families.updateMany(
+      { userId, credentialEpoch: epoch, revokedAt: { $exists: false } },
+      { $set: { revokedAt: now } },
+    )
+    return true
+  }
+
+  async findOwner(userId: string): Promise<IdentityOwner | null> {
+    const owner = await this.owners.findOne({ _id: userId })
+    return owner ? this.toOwner(owner) : null
+  }
 
   async createGuestOwner(input: CreateGuestOwner): Promise<void> {
     await this.owners.insertOne({
@@ -111,5 +200,31 @@ export class MongoIdentityRepository {
       { $inc: { credentialEpoch: 1 } },
       { returnDocument: 'after' },
     )
+  }
+
+  private async withOwner(family: IdentityFamilyDocument, reused: boolean) {
+    const owner = await this.owners.findOne({ _id: family.userId })
+    return owner ? { owner: this.toOwner(owner), family: this.toFamily(family), reused } : null
+  }
+
+  private toOwner(owner: IdentityOwnerDocument): IdentityOwner {
+    return { ...owner, userId: owner._id }
+  }
+
+  private toFamily(family: IdentityFamilyDocument): IdentityFamily {
+    return {
+      familyId: family._id,
+      userId: family.userId,
+      credentialEpoch: family.credentialEpoch,
+      refreshHash: family.currentRefreshHash,
+      usedRefreshHashes: new Set(family.usedRefreshHashes),
+      absoluteExpiresAt: family.absoluteExpiresAt,
+      revokedAt: family.revokedAt,
+      access: family.access,
+    }
+  }
+
+  private toDocumentGeneration(family: IdentityFamily) {
+    return family.usedRefreshHashes.size
   }
 }

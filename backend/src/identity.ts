@@ -10,7 +10,7 @@ export type TokenPair = {
   user: { id: string; isAnonymous: boolean }
 }
 
-type Owner = {
+export type IdentityOwner = {
   userId: string
   kind: 'guest' | 'registered'
   state: 'active' | 'upgrading' | 'deleting' | 'deleted'
@@ -18,8 +18,8 @@ type Owner = {
   credentialEpoch: number
 }
 
-type AccessCredential = { hash: string; expiresAt: number }
-type Family = {
+export type IdentityAccess = { hash: string; expiresAt: number }
+export type IdentityFamily = {
   familyId: string
   userId: string
   credentialEpoch: number
@@ -27,12 +27,100 @@ type Family = {
   usedRefreshHashes: Set<string>
   absoluteExpiresAt: number
   revokedAt?: number
-  access: AccessCredential[]
+  access: IdentityAccess[]
 }
 
-export class MemoryIdentityStore {
-  readonly owners = new Map<string, Owner>()
-  readonly families = new Map<string, Family>()
+export type CreateIdentity = { owner: IdentityOwner; family: IdentityFamily }
+
+export interface IdentityRepository {
+  create(input: CreateIdentity): Promise<void>
+  findAccess(
+    hash: string,
+    now: number,
+  ): Promise<{ owner: IdentityOwner; family: IdentityFamily } | null>
+  findRefresh(
+    hash: string,
+  ): Promise<{ owner: IdentityOwner; family: IdentityFamily; reused: boolean } | null>
+  rotate(
+    family: IdentityFamily,
+    currentHash: string,
+    nextHash: string,
+    access: IdentityAccess,
+  ): Promise<IdentityFamily | null>
+  revokeReuse(familyId: string, hash: string, now: number): Promise<boolean>
+  touch(userId: string, now: number): Promise<boolean>
+  revokeAll(userId: string, epoch: number, now: number): Promise<boolean>
+  findOwner(userId: string): Promise<IdentityOwner | null>
+}
+
+export class MemoryIdentityStore implements IdentityRepository {
+  readonly owners = new Map<string, IdentityOwner>()
+  readonly families = new Map<string, IdentityFamily>()
+
+  async create({ owner, family }: CreateIdentity) {
+    if (this.owners.has(owner.userId)) throw new Error('identity already exists')
+    this.owners.set(owner.userId, owner)
+    this.families.set(family.familyId, family)
+  }
+
+  async findAccess(hash: string, now: number) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (owner && family.access.some((item) => item.hash === hash && item.expiresAt > now))
+        return { owner, family }
+    }
+    return null
+  }
+
+  async findRefresh(hash: string) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (!owner) continue
+      if (family.usedRefreshHashes.has(hash)) return { owner, family, reused: true }
+      if (family.refreshHash === hash) return { owner, family, reused: false }
+    }
+    return null
+  }
+
+  async rotate(
+    family: IdentityFamily,
+    currentHash: string,
+    nextHash: string,
+    access: IdentityAccess,
+  ) {
+    if (family.refreshHash !== currentHash || family.revokedAt !== undefined) return null
+    family.usedRefreshHashes.add(currentHash)
+    family.refreshHash = nextHash
+    family.access.push(access)
+    return family
+  }
+
+  async revokeReuse(familyId: string, hash: string, now: number) {
+    const family = this.families.get(familyId)
+    if (!family?.usedRefreshHashes.has(hash) || family.revokedAt !== undefined) return false
+    family.revokedAt = now
+    return true
+  }
+
+  async touch(userId: string, now: number) {
+    const owner = this.owners.get(userId)
+    if (!owner || owner.state !== 'active') return false
+    owner.lastActiveAt = now
+    return true
+  }
+
+  async revokeAll(userId: string, epoch: number, now: number) {
+    const owner = this.owners.get(userId)
+    if (!owner || owner.state !== 'active' || owner.credentialEpoch !== epoch) return false
+    owner.credentialEpoch += 1
+    for (const family of this.families.values())
+      if (family.userId === userId) family.revokedAt = now
+    return true
+  }
+
+  async findOwner(userId: string) {
+    return this.owners.get(userId) ?? null
+  }
 }
 
 type IdentityOptions = {
@@ -60,7 +148,7 @@ export class IdentityService {
   private readonly refreshLifetimeMs: number
 
   constructor(
-    private readonly store: MemoryIdentityStore,
+    private readonly store: IdentityRepository,
     options: IdentityOptions = {},
   ) {
     this.now = options.now ?? (() => new Date())
@@ -70,23 +158,25 @@ export class IdentityService {
   }
 
   async registerGuest(userId: string): Promise<TokenPair> {
-    if (this.store.owners.has(userId)) throw new Error('identity already exists')
     const now = this.now().getTime()
-    this.store.owners.set(userId, {
+    const owner: IdentityOwner = {
       userId,
       kind: 'guest',
       state: 'active',
       lastActiveAt: now,
       credentialEpoch: 0,
-    })
-    return this.createFamily(userId, 0, now)
+    }
+    const created = await this.newFamily(owner, now)
+    await this.store.create({ owner, family: created.family })
+    return created.pair
   }
 
   async authenticateAccess(accessToken: string): Promise<Principal | null> {
     const hash = await hashCredential(accessToken)
     const now = this.now().getTime()
-    for (const family of this.store.families.values()) {
-      const owner = this.store.owners.get(family.userId)
+    const found = await this.store.findAccess(hash, now)
+    if (found) {
+      const { owner, family } = found
       if (
         family.revokedAt === undefined &&
         family.absoluteExpiresAt > now &&
@@ -107,13 +197,13 @@ export class IdentityService {
   async refresh(refreshToken: string): Promise<TokenPair | null> {
     const hash = await hashCredential(refreshToken)
     const now = this.now().getTime()
-    for (const family of this.store.families.values()) {
-      if (family.usedRefreshHashes.has(hash)) {
-        family.revokedAt = now
+    const found = await this.store.findRefresh(hash)
+    if (found) {
+      const { owner, family, reused } = found
+      if (reused) {
+        await this.store.revokeReuse(family.familyId, hash, now)
         return null
       }
-      if (family.refreshHash !== hash) continue
-      const owner = this.store.owners.get(family.userId)
       if (
         family.revokedAt !== undefined ||
         family.absoluteExpiresAt <= now ||
@@ -122,8 +212,7 @@ export class IdentityService {
       ) {
         return null
       }
-      family.usedRefreshHashes.add(hash)
-      return this.rotate(family, owner, now)
+      return this.rotate(family, owner, hash, now)
     }
     return null
   }
@@ -131,26 +220,20 @@ export class IdentityService {
   async recordActivity(accessToken: string): Promise<boolean> {
     const principal = await this.authenticateAccess(accessToken)
     if (!principal) return false
-    const owner = this.store.owners.get(principal.userId)
-    if (!owner || owner.state !== 'active') return false
-    owner.lastActiveAt = this.now().getTime()
-    return true
+    return this.store.touch(principal.userId, this.now().getTime())
   }
 
   async revokeAll(accessToken: string): Promise<boolean> {
     const principal = await this.authenticateAccess(accessToken)
     if (!principal) return false
     const now = this.now().getTime()
-    const owner = this.store.owners.get(principal.userId)!
-    owner.credentialEpoch += 1
-    for (const family of this.store.families.values()) {
-      if (family.userId === owner.userId) family.revokedAt = now
-    }
-    return true
+    const found = await this.store.findAccess(await hashCredential(accessToken), now)
+    if (!found) return false
+    return this.store.revokeAll(principal.userId, found.owner.credentialEpoch, now)
   }
 
   async isCleanupCandidate(userId: string): Promise<boolean> {
-    const owner = this.store.owners.get(userId)
+    const owner = await this.store.findOwner(userId)
     return Boolean(
       owner?.kind === 'guest' &&
       owner.state === 'active' &&
@@ -158,29 +241,48 @@ export class IdentityService {
     )
   }
 
-  private async createFamily(userId: string, credentialEpoch: number, now: number) {
-    const family: Family = {
-      familyId: this.randomToken(),
-      userId,
-      credentialEpoch,
-      refreshHash: '',
-      usedRefreshHashes: new Set(),
-      absoluteExpiresAt: now + this.refreshLifetimeMs,
-      access: [],
-    }
-    this.store.families.set(family.familyId, family)
-    return this.rotate(family, this.store.owners.get(userId)!, now)
-  }
-
-  private async rotate(family: Family, owner: Owner, now: number): Promise<TokenPair> {
+  private async newFamily(owner: IdentityOwner, now: number) {
     const accessToken = this.randomToken()
     const refreshToken = this.randomToken()
-    family.refreshHash = await hashCredential(refreshToken)
-    family.access.push({
+    const family: IdentityFamily = {
+      familyId: this.randomToken(),
+      userId: owner.userId,
+      credentialEpoch: owner.credentialEpoch,
+      refreshHash: await hashCredential(refreshToken),
+      usedRefreshHashes: new Set(),
+      absoluteExpiresAt: now + this.refreshLifetimeMs,
+      access: [{ hash: await hashCredential(accessToken), expiresAt: now + this.accessLifetimeMs }],
+    }
+    return { family, pair: this.pair(accessToken, refreshToken, family, owner) }
+  }
+
+  private async rotate(
+    family: IdentityFamily,
+    owner: IdentityOwner,
+    currentHash: string,
+    now: number,
+  ): Promise<TokenPair | null> {
+    const accessToken = this.randomToken()
+    const refreshToken = this.randomToken()
+    const nextHash = await hashCredential(refreshToken)
+    const access = {
       hash: await hashCredential(accessToken),
       expiresAt: now + this.accessLifetimeMs,
-    })
-    family.access = family.access.filter((credential) => credential.expiresAt > now)
+    }
+    const rotated = await this.store.rotate(family, currentHash, nextHash, access)
+    if (!rotated) {
+      await this.store.revokeReuse(family.familyId, currentHash, now)
+      return null
+    }
+    return this.pair(accessToken, refreshToken, rotated, owner)
+  }
+
+  private pair(
+    accessToken: string,
+    refreshToken: string,
+    family: IdentityFamily,
+    owner: IdentityOwner,
+  ): TokenPair {
     return {
       accessToken,
       refreshToken,
