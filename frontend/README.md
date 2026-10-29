@@ -71,7 +71,9 @@ pnpm dev
 ```
 
 Run the Bun backend on port 3000, open http://localhost:5173, then create an account or sign in.
-The Vite server proxies `/api` to the backend. In the studio:
+For this local origin, configure the backend with `BETTER_AUTH_URL=http://localhost:5173`;
+add any other Vite origin to `BETTER_AUTH_TRUSTED_ORIGINS`. The Vite server proxies `/api`
+to the backend and removes that prefix exactly like production Caddy. In the studio:
 
 1. Pick a sample video (or drop any video file — it is not uploaded anywhere).
 2. Choose one or more faces.

@@ -6,7 +6,9 @@ import { createAuthService } from './auth'
 
 export type AuthenticatedUser = {
   id: string
-  email: string
+  // Guest identities added by AVI-343 may not have an email address. A stable
+  // server-issued id is the only property required by authorization guards.
+  email?: string
   name?: string
 }
 
