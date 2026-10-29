@@ -5,6 +5,7 @@ import type { Config } from './config'
 
 export type MediaMetadata = {
   id: string
+  ownerId: string
   name: string
   type: string
   size: number
@@ -15,26 +16,35 @@ export type MediaMetadata = {
 export type StoredMedia = { metadata: MediaMetadata; body: ReadableStream<Uint8Array> }
 
 export interface MediaRepository {
-  create(file: File): Promise<MediaMetadata>
-  get(id: string): Promise<StoredMedia | null>
-  list(limit: number): Promise<MediaMetadata[]>
+  create(file: File, ownerId: string): Promise<MediaMetadata>
+  get(id: string, ownerId: string): Promise<StoredMedia | null>
+  list(limit: number, ownerId: string): Promise<MediaMetadata[]>
 }
 
 export class MediaService implements MediaRepository {
+  private readonly indexesReady: Promise<unknown>
+
   constructor(
     private readonly collection: Collection<MediaMetadata>,
     private readonly container: ContainerClient,
-  ) {}
+  ) {
+    this.indexesReady = Promise.all([
+      collection.createIndex({ ownerId: 1, id: 1 }, { name: 'media_owner_id', unique: true }),
+      collection.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'media_owner_created_at' }),
+    ])
+  }
 
-  async create(file: File): Promise<MediaMetadata> {
+  async create(file: File, ownerId: string): Promise<MediaMetadata> {
+    await this.indexesReady
     const id = crypto.randomUUID()
     const safeName = file.name.replace(/[^\p{L}\p{N}._-]+/gu, '_') || 'media'
     const metadata: MediaMetadata = {
       id,
+      ownerId,
       name: file.name,
       type: file.type,
       size: file.size,
-      blobKey: `${id}/${safeName}`,
+      blobKey: `${encodeURIComponent(ownerId)}/${id}/${safeName}`,
       createdAt: new Date().toISOString(),
     }
     const blob = this.container.getBlockBlobClient(metadata.blobKey)
@@ -50,8 +60,9 @@ export class MediaService implements MediaRepository {
     return metadata
   }
 
-  async get(id: string): Promise<StoredMedia | null> {
-    const metadata = await this.collection.findOne({ id }, { projection: { _id: 0 } })
+  async get(id: string, ownerId: string): Promise<StoredMedia | null> {
+    await this.indexesReady
+    const metadata = await this.collection.findOne({ id, ownerId }, { projection: { _id: 0 } })
     if (!metadata) return null
     const download = await this.container.getBlobClient(metadata.blobKey).download()
     if (!download.readableStreamBody) throw new Error('Blob response did not include a stream')
@@ -61,9 +72,11 @@ export class MediaService implements MediaRepository {
     }
   }
 
-  async list(limit: number): Promise<MediaMetadata[]> {
+  async list(limit: number, ownerId: string): Promise<MediaMetadata[]> {
+    await this.indexesReady
     return this.collection
-      .find({}, { projection: { _id: 0 } })
+      .find({ ownerId }, { projection: { _id: 0 } })
+      .sort({ createdAt: -1 })
       .limit(limit)
       .toArray()
   }

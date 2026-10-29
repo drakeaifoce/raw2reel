@@ -188,6 +188,12 @@ const isAllowedType = (type: string, allowed: string[]) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
   )
 
+const publicMedia = ({
+  blobKey: _blobKey,
+  ownerId: _ownerId,
+  ...metadata
+}: Awaited<ReturnType<MediaRepository['create']>>) => metadata
+
 type SignUpBody = { email: string; password: string; name: string; mode: 'new' | 'upgrade' }
 
 const readSignUpBody = async (request: Request): Promise<SignUpBody | undefined> => {
@@ -250,6 +256,26 @@ export async function requireSession(
     return error('authentication required', 'UNAUTHORIZED', 401)
   }
   return session
+}
+
+async function requireMediaPrincipal(
+  request: Request,
+  auth: AuthService | undefined,
+  identity: AppDependencies['identity'],
+): Promise<{ userId: string } | Response> {
+  if (request.headers.has('authorization')) {
+    if (request.headers.has('cookie')) {
+      return error('choose one authentication transport', 'INVALID_REQUEST', 400)
+    }
+    const token = bearerToken(request)
+    if (!token) return error('authentication required', 'UNAUTHORIZED', 401)
+    if (!identity) return error('identity service is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    const principal = await identity.authenticateAccess(token)
+    return principal ?? error('authentication required', 'UNAUTHORIZED', 401)
+  }
+
+  const session = await requireSession(request, auth, identity)
+  return session instanceof Response ? session : { userId: session.user.id }
 }
 
 export async function handle(
@@ -552,7 +578,14 @@ export async function handle(
     return accepted ? new Response(null, { status: 204 }) : identityError('INVALID_CREDENTIAL', 401)
   }
 
-  if (pathname === '/media' || pathname.startsWith('/media/') || pathname === '/db/hello') {
+  let mediaPrincipal: { userId: string } | undefined
+  if (pathname === '/media' || pathname.startsWith('/media/')) {
+    const principal = await requireMediaPrincipal(request, dependencies.auth, dependencies.identity)
+    if (principal instanceof Response) return principal
+    mediaPrincipal = principal
+  }
+
+  if (pathname === '/db/hello') {
     const session = await requireSession(request, dependencies.auth, dependencies.identity)
     if (session instanceof Response) return session
   }
@@ -577,7 +610,7 @@ export async function handle(
     if (!isAllowedType(file.type, allowed)) {
       return error('media type is not allowed', 'MEDIA_TYPE_NOT_ALLOWED', 415)
     }
-    return json(await dependencies.media.create(file), 201)
+    return json(publicMedia(await dependencies.media.create(file, mediaPrincipal!.userId)), 201)
   }
 
   if (pathname === '/media' && request.method === 'GET') {
@@ -588,7 +621,9 @@ export async function handle(
     if (!/^\d+$/.test(rawLimit) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
       return error('limit must be an integer from 1 to 100', 'INVALID_LIMIT', 400)
     }
-    return json({ items: await dependencies.media.list(limit) })
+    return json({
+      items: (await dependencies.media.list(limit, mediaPrincipal!.userId)).map(publicMedia),
+    })
   }
 
   const mediaMatch = pathname.match(/^\/media\/([^/]+)$/)
@@ -601,7 +636,7 @@ export async function handle(
     } catch {
       return error('media id has invalid URL encoding', 'INVALID_MEDIA_ID', 400)
     }
-    const stored = await dependencies.media.get(id)
+    const stored = await dependencies.media.get(id, mediaPrincipal!.userId)
     if (!stored) return error('media was not found', 'MEDIA_NOT_FOUND', 404)
     return new Response(stored.body, {
       headers: {
