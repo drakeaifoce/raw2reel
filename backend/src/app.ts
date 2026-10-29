@@ -15,7 +15,7 @@ export type AuthenticatedUser = {
   isAnonymous?: boolean | null
 }
 
-export type AuthSession = { user: AuthenticatedUser }
+export type AuthSession = { user: AuthenticatedUser; sessionToken?: string }
 export type GuestAuthSession = {
   user: AuthenticatedUser & { isAnonymous: true }
   sessionToken: string
@@ -91,6 +91,8 @@ export type AppDependencies = {
     | 'revokeRefresh'
     | 'claimUpgradeWithAccess'
     | 'claimUpgradeWithRefresh'
+    | 'authenticateSession'
+    | 'revokeSession'
   >
   registration?: RegistrationService
   identityWebOrigins?: string[]
@@ -235,10 +237,19 @@ const acceptRegistration = async (
 export async function requireSession(
   request: Request,
   auth: AuthService | undefined,
+  identity?: AppDependencies['identity'],
 ): Promise<AuthSession | Response> {
   if (!auth) return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
   const session = await auth.getSession(request.headers)
-  return session ?? error('authentication required', 'UNAUTHORIZED', 401)
+  if (!session) return error('authentication required', 'UNAUTHORIZED', 401)
+  if (
+    identity &&
+    (!session.sessionToken ||
+      !(await identity.authenticateSession(session.user.id, session.sessionToken)))
+  ) {
+    return error('authentication required', 'UNAUTHORIZED', 401)
+  }
+  return session
 }
 
 export async function handle(
@@ -251,6 +262,21 @@ export async function handle(
   if (pathname === '/auth' || pathname.startsWith('/auth/')) {
     if (!dependencies.auth)
       return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    if (pathname === '/auth/sign-in/anonymous') {
+      return error('use the identity guest endpoint', 'IDENTITY_REQUIRED', 409)
+    }
+    if (pathname === '/auth/sign-out' && request.method === 'POST') {
+      const session = await dependencies.auth.getSession(request.headers)
+      if (!session?.sessionToken || !dependencies.identity) {
+        return error('identity session is required', 'UNAUTHORIZED', 401)
+      }
+      const authResponse = dependencies.auth.signOut
+        ? await dependencies.auth.signOut(request.headers)
+        : await dependencies.auth.handler(request)
+      if (!authResponse.ok) return authResponse
+      await dependencies.identity.revokeSession(session.user.id, session.sessionToken)
+      return authResponse
+    }
     const publicUrl = new URL(request.url)
     publicUrl.pathname = `/api${pathname}`
     return dependencies.auth.handler(new Request(publicUrl.toString(), request))
@@ -362,14 +388,19 @@ export async function handle(
         return identityError('INVALID_REQUEST', 400)
       }
     }
-    if (!(await dependencies.identity!.revokeRefresh(token))) {
-      return identityError('INVALID_CREDENTIAL', 401)
+    if (!isWeb) {
+      return (await dependencies.identity!.revokeRefresh(token))
+        ? new Response(null, { status: 204 })
+        : identityError('INVALID_CREDENTIAL', 401)
     }
-    if (!isWeb) return new Response(null, { status: 204 })
     const authResponse = dependencies.auth?.signOut
       ? await dependencies.auth.signOut(request.headers)
       : undefined
-    const response = new Response(null, { status: authResponse?.ok === false ? 503 : 204 })
+    if (authResponse && !authResponse.ok) return new Response(null, { status: 503 })
+    if (!(await dependencies.identity!.revokeRefresh(token))) {
+      return identityError('INVALID_CREDENTIAL', 401)
+    }
+    const response = new Response(null, { status: 204 })
     for (const cookie of authResponse?.headers.getSetCookie() ?? []) {
       response.headers.append('set-cookie', cookie)
     }
@@ -521,7 +552,7 @@ export async function handle(
   }
 
   if (pathname === '/media' || pathname.startsWith('/media/') || pathname === '/db/hello') {
-    const session = await requireSession(request, dependencies.auth)
+    const session = await requireSession(request, dependencies.auth, dependencies.identity)
     if (session instanceof Response) return session
   }
 

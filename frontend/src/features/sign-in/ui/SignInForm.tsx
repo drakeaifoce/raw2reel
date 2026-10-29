@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { routes } from '@/shared/config'
-import { authClient } from '@/shared/api'
+import { authClient, identityClient } from '@/shared/api'
 import { Button } from '@/shared/ui/button'
 import { TextField } from '@/shared/ui/text-field'
 import styles from './SignInForm.module.css'
@@ -45,8 +45,8 @@ export function SignInForm() {
     setGuestPending(true)
     setError('')
     try {
-      const result = await authClient.signIn.anonymous()
-      if (!result.error) {
+      const result = await identityClient.startGuest()
+      if (result.ok) {
         void navigate(routes.studio, { replace: true })
         return
       }

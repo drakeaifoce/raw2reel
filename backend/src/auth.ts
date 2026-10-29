@@ -81,7 +81,12 @@ export function createAuthServiceWithDatabase(
 
   return {
     handler: (request) => auth.handler(request),
-    getSession: async (headers) => auth.api.getSession({ headers }),
+    getSession: async (headers) => {
+      const result = await auth.api.getSession({ headers })
+      return result
+        ? { user: result.user, sessionToken: (result.session as { token?: string }).token }
+        : null
+    },
     createGuest: async (headers) => {
       const requestHeaders = new Headers(headers)
       requestHeaders.set('content-type', 'application/json')

@@ -6,6 +6,7 @@ import { SignInForm } from './SignInForm'
 const auth = vi.hoisted(() => ({
   signIn: vi.fn(),
   signInAnonymous: vi.fn(),
+  startGuest: vi.fn(),
   signUp: vi.fn(),
 }))
 
@@ -14,6 +15,7 @@ vi.mock('@/shared/api', () => ({
     signIn: { email: auth.signIn, anonymous: auth.signInAnonymous },
     signUp: { email: auth.signUp },
   },
+  identityClient: { startGuest: auth.startGuest },
 }))
 
 afterEach(() => {
@@ -34,13 +36,13 @@ function renderForm() {
 
 describe('SignInForm', () => {
   test('starts a guest session and explains its retention risk', async () => {
-    auth.signInAnonymous.mockResolvedValue({ data: {}, error: null })
+    auth.startGuest.mockResolvedValue({ ok: true })
     renderForm()
 
     expect(screen.getByText(/Guest work can be lost/)).toBeDefined()
     fireEvent.click(screen.getByRole('button', { name: 'Continue as guest' }))
 
-    await waitFor(() => expect(auth.signInAnonymous).toHaveBeenCalledOnce())
+    await waitFor(() => expect(auth.startGuest).toHaveBeenCalledOnce())
     expect(await screen.findByText('Studio opened')).toBeDefined()
   })
 

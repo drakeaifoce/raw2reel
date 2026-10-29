@@ -56,6 +56,7 @@ export interface IdentityRepository {
   revokeAll(userId: string, epoch: number, now: number): Promise<boolean>
   claimUpgrade(userId: string, epoch: number, operationId: string): Promise<boolean>
   findOwner(userId: string): Promise<IdentityOwner | null>
+  findSession(hash: string): Promise<{ owner: IdentityOwner; family: IdentityFamily } | null>
 }
 
 export class MemoryIdentityStore implements IdentityRepository {
@@ -152,6 +153,14 @@ export class MemoryIdentityStore implements IdentityRepository {
 
   async findOwner(userId: string) {
     return this.owners.get(userId) ?? null
+  }
+
+  async findSession(hash: string) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (owner && family.sessionBindingHash === hash) return { owner, family }
+    }
+    return null
   }
 }
 
@@ -321,6 +330,28 @@ export class IdentityService {
     const now = this.now().getTime()
     if (!found || found.reused || !this.validFamily(found.owner, found.family, now)) return false
     return this.store.revokeFamily(found.family.familyId, hash, now)
+  }
+
+  async authenticateSession(userId: string, sessionToken: string): Promise<boolean> {
+    const found = await this.store.findSession(await hashCredential(sessionToken))
+    return Boolean(
+      found &&
+      found.owner.userId === userId &&
+      this.validFamily(found.owner, found.family, this.now().getTime()),
+    )
+  }
+
+  async revokeSession(userId: string, sessionToken: string): Promise<boolean> {
+    const found = await this.store.findSession(await hashCredential(sessionToken))
+    const now = this.now().getTime()
+    if (
+      !found ||
+      found.owner.userId !== userId ||
+      !this.validFamily(found.owner, found.family, now)
+    ) {
+      return false
+    }
+    return this.store.revokeFamily(found.family.familyId, found.family.refreshHash, now)
   }
 
   async claimUpgradeWithAccess(accessToken: string): Promise<UpgradeClaim> {

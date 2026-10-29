@@ -317,6 +317,40 @@ describe('/identity registered sign-in and logout', () => {
     expect(await identity.refresh(refreshToken)).toBeNull()
   })
 
+  test('keeps web refresh usable when Better Auth sign-out transiently fails', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const pair = await identity.registerRegistered(
+      'registered-user',
+      'better-auth-registered-session',
+    )
+    const csrf = await identity.refreshCsrfToken(pair.refreshToken)
+    let attempts = 0
+    const auth = {
+      ...registeredAuth,
+      signOut: async () => new Response(null, { status: ++attempts === 1 ? 503 : 204 }),
+    }
+    const makeRequest = () =>
+      new Request('http://localhost/identity/web/logout', {
+        method: 'POST',
+        headers: {
+          origin,
+          cookie: `__Host-r2r-refresh=${pair.refreshToken}`,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: '{}',
+      })
+
+    expect(
+      (await handle(makeRequest(), { auth, identity, identityWebOrigins: [origin] })).status,
+    ).toBe(503)
+    expect(await identity.refreshCsrfToken(pair.refreshToken)).not.toBeNull()
+    expect(
+      (await handle(makeRequest(), { auth, identity, identityWebOrigins: [origin] })).status,
+    ).toBe(204)
+    expect(await identity.refresh(pair.refreshToken)).toBeNull()
+  })
+
   test('revokes an API family using only its refresh credential', async () => {
     const identity = new IdentityService(new MemoryIdentityStore())
     const pair = await identity.registerRegistered(

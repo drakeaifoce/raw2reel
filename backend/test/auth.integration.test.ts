@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { memoryAdapter, type MemoryDB } from '@better-auth/memory-adapter'
 import { createAuthServiceWithDatabase } from '../src/auth'
+import { handle, requireSession } from '../src/app'
+import { IdentityService, MemoryIdentityStore } from '../src/identity'
 
 const origin = 'http://localhost:5173'
 const config = {
@@ -22,6 +24,88 @@ const sessionCookie = (response: Response) => {
 }
 
 describe('Better Auth lifecycle', () => {
+  test('routes guest issuance and logout through the identity lifecycle', async () => {
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
+    const identity = new IdentityService(new MemoryIdentityStore())
+
+    const rawGuest = await handle(
+      new Request(`${origin}/auth/sign-in/anonymous`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth, identity, identityWebOrigins: [origin] },
+    )
+    expect(rawGuest.status).toBe(409)
+
+    const issued = await handle(
+      new Request(`${origin}/identity/web/guest`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth, identity, identityWebOrigins: [origin] },
+    )
+    expect(issued.status).toBe(201)
+    const body = (await issued.json()) as { accessToken: string }
+    const cookies = issued.headers
+      .getSetCookie()
+      .map((value) => value.split(';', 1)[0])
+      .join('; ')
+    expect(await identity.authenticateAccess(body.accessToken)).not.toBeNull()
+
+    const rawLogout = await handle(
+      new Request(`${origin}/auth/sign-out`, {
+        method: 'POST',
+        headers: { origin, cookie: cookies },
+      }),
+      { auth, identity, identityWebOrigins: [origin] },
+    )
+    expect(rawLogout.status).toBe(200)
+    expect(await identity.authenticateAccess(body.accessToken)).toBeNull()
+    expect(await auth.getSession(new Headers({ cookie: cookies }))).toBeNull()
+  })
+
+  test('revoke-all invalidates access, refresh, and cookie authorization together', async () => {
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const issued = await handle(
+      new Request(`${origin}/identity/web/guest`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth, identity, identityWebOrigins: [origin] },
+    )
+    const body = (await issued.json()) as { accessToken: string }
+    const setCookies = issued.headers.getSetCookie()
+    const cookies = setCookies.map((value) => value.split(';', 1)[0]).join('; ')
+    const refreshToken = setCookies
+      .find((value) => value.startsWith('__Host-r2r-refresh='))!
+      .split(';', 1)[0]!
+      .split('=', 2)[1]!
+
+    const revoked = await handle(
+      new Request(`${origin}/identity/revoke-all`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${body.accessToken}` },
+      }),
+      { auth, identity },
+    )
+    expect(revoked.status).toBe(204)
+    expect(await identity.authenticateAccess(body.accessToken)).toBeNull()
+    expect(await identity.refresh(refreshToken)).toBeNull()
+    expect(
+      await requireSession(
+        new Request(`${origin}/media`, { headers: { cookie: cookies } }),
+        auth,
+        identity,
+      ),
+    ).toBeInstanceOf(Response)
+  })
+
   test('creates a server-verifiable guest session for first-party token binding', async () => {
     const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
     const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)

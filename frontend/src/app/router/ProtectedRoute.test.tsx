@@ -4,14 +4,19 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { ProtectedRoute } from './ProtectedRoute'
 
 const session = vi.hoisted(() => ({ value: null as unknown, pending: false }))
+const identity = vi.hoisted(() => ({ accessToken: vi.fn(), refresh: vi.fn() }))
 
 vi.mock('@/shared/api', () => ({
   authClient: {
     useSession: () => ({ data: session.value, isPending: session.pending }),
   },
+  identityClient: identity,
 }))
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 test('redirects a guest away from the studio', () => {
   session.value = null
@@ -46,4 +51,21 @@ test('renders the studio for a restored session', () => {
   )
 
   expect(screen.getByText('Private studio')).toBeDefined()
+})
+
+test('restores the identity access token before opening a guest studio', async () => {
+  session.value = { user: { id: 'guest-1', isAnonymous: true } }
+  identity.accessToken.mockReturnValue(undefined)
+  identity.refresh.mockResolvedValue({ ok: true })
+  render(
+    <MemoryRouter initialEntries={['/studio']}>
+      <ProtectedRoute>
+        <p>Private studio</p>
+      </ProtectedRoute>
+    </MemoryRouter>,
+  )
+
+  expect(screen.getByText('Checking your session…')).toBeDefined()
+  expect(await screen.findByText('Private studio')).toBeDefined()
+  expect(identity.refresh).toHaveBeenCalledOnce()
 })

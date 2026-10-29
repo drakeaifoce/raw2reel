@@ -184,6 +184,11 @@ export class MongoIdentityRepository implements IdentityRepository {
     return owner ? this.toOwner(owner) : null
   }
 
+  async findSession(hash: string) {
+    const family = await this.families.findOne({ sessionBindingHash: hash })
+    return family ? this.withOwner(family, false) : null
+  }
+
   async createGuestOwner(input: CreateGuestOwner): Promise<void> {
     await this.owners.insertOne({
       _id: input.userId,

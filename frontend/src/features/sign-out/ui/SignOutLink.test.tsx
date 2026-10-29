@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   resetReel: vi.fn(),
 }))
 
-vi.mock('@/shared/api', () => ({ authClient: { signOut: mocks.signOut } }))
+vi.mock('@/shared/api', () => ({ identityClient: { signOut: mocks.signOut } }))
 vi.mock('@/entities/project', () => ({ useProjectStore: () => mocks.resetProject }))
 vi.mock('@/entities/reel', () => ({ useReelStore: () => mocks.resetReel }))
 
@@ -19,7 +19,7 @@ afterEach(() => {
 })
 
 test('revokes the session, clears editor state and returns to login', async () => {
-  mocks.signOut.mockResolvedValue({ data: {}, error: null })
+  mocks.signOut.mockResolvedValue({ ok: true })
   render(
     <MemoryRouter initialEntries={['/studio']}>
       <Routes>
@@ -38,7 +38,7 @@ test('revokes the session, clears editor state and returns to login', async () =
 })
 
 test('keeps local state when the server cannot revoke the session', async () => {
-  mocks.signOut.mockResolvedValue({ data: null, error: { message: 'internal detail' } })
+  mocks.signOut.mockResolvedValue({ ok: false })
   render(
     <MemoryRouter initialEntries={['/studio']}>
       <SignOutLink />
