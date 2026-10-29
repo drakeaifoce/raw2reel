@@ -24,12 +24,12 @@ function dependencies(overrides: Partial<AppDependencies> = {}): AppDependencies
 }
 
 describe('media API', () => {
-  test('POST /api/media uploads an allowed file', async () => {
+  test('POST /media uploads an allowed file', async () => {
     const form = new FormData()
     form.set('file', new File(['test'], 'clip.mp4', { type: 'video/mp4' }))
 
     const response = await handle(
-      new Request('http://localhost/api/media', { method: 'POST', body: form }),
+      new Request('http://localhost/media', { method: 'POST', body: form }),
       dependencies(),
     )
 
@@ -37,38 +37,38 @@ describe('media API', () => {
     expect(await response.json()).toEqual(metadata)
   })
 
-  test('POST /api/media requires a file', async () => {
+  test('POST /media requires a file', async () => {
     const response = await handle(
-      new Request('http://localhost/api/media', { method: 'POST', body: new FormData() }),
+      new Request('http://localhost/media', { method: 'POST', body: new FormData() }),
       dependencies(),
     )
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ code: 'FILE_REQUIRED' })
   })
 
-  test('POST /api/media rejects disallowed content types', async () => {
+  test('POST /media rejects disallowed content types', async () => {
     const form = new FormData()
     form.set('file', new File(['text'], 'notes.txt', { type: 'text/plain' }))
     const response = await handle(
-      new Request('http://localhost/api/media', { method: 'POST', body: form }),
+      new Request('http://localhost/media', { method: 'POST', body: form }),
       dependencies(),
     )
     expect(response.status).toBe(415)
     expect(await response.json()).toMatchObject({ code: 'MEDIA_TYPE_NOT_ALLOWED' })
   })
 
-  test('POST /api/media rejects files over the configured limit', async () => {
+  test('POST /media rejects files over the configured limit', async () => {
     const form = new FormData()
     form.set('file', new File(['12345'], 'large.png', { type: 'image/png' }))
     const response = await handle(
-      new Request('http://localhost/api/media', { method: 'POST', body: form }),
+      new Request('http://localhost/media', { method: 'POST', body: form }),
       dependencies({ maxMediaSizeBytes: 4 }),
     )
     expect(response.status).toBe(413)
     expect(await response.json()).toMatchObject({ code: 'FILE_TOO_LARGE' })
   })
 
-  test('GET /api/media validates and forwards the list limit', async () => {
+  test('GET /media validates and forwards the list limit', async () => {
     let receivedLimit = 0
     const deps = dependencies({
       media: {
@@ -80,45 +80,44 @@ describe('media API', () => {
         },
       },
     })
-    const response = await handle(new Request('http://localhost/api/media?limit=7'), deps)
+    const response = await handle(new Request('http://localhost/media?limit=7'), deps)
     expect(response.status).toBe(200)
     expect(receivedLimit).toBe(7)
     expect(await response.json()).toEqual({ items: [metadata] })
 
-    const invalid = await handle(new Request('http://localhost/api/media?limit=101'), deps)
+    const invalid = await handle(new Request('http://localhost/media?limit=101'), deps)
     expect(invalid.status).toBe(400)
     expect(await invalid.json()).toMatchObject({ code: 'INVALID_LIMIT' })
   })
 
-  test('GET /api/media/:id streams content with its media type', async () => {
-    const response = await handle(new Request('http://localhost/api/media/media-1'), dependencies())
+  test('GET /media/:id streams content with safe browser headers', async () => {
+    const response = await handle(new Request('http://localhost/media/media-1'), dependencies())
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('video/mp4')
     expect(response.headers.get('content-length')).toBe('4')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox")
     expect(await response.text()).toBe('test')
   })
 
-  test('GET /api/media/:id returns 404 for missing media', async () => {
+  test('GET /media/:id returns 404 for missing media', async () => {
     const deps = dependencies({
       media: { create: async () => metadata, get: async () => null, list: async () => [] },
     })
-    const response = await handle(new Request('http://localhost/api/media/missing'), deps)
+    const response = await handle(new Request('http://localhost/media/missing'), deps)
     expect(response.status).toBe(404)
     expect(await response.json()).toMatchObject({ code: 'MEDIA_NOT_FOUND' })
   })
 
-  test('GET /api/media/:id rejects malformed URL encoding', async () => {
-    const response = await handle(
-      new Request('http://localhost/api/media/%E0%A4%A'),
-      dependencies(),
-    )
+  test('GET /media/:id rejects malformed URL encoding', async () => {
+    const response = await handle(new Request('http://localhost/media/%E0%A4%A'), dependencies())
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ code: 'INVALID_MEDIA_ID' })
   })
 })
 
-test('GET /api/db/hello writes and reads a MongoDB document', async () => {
-  const response = await handle(new Request('http://localhost/api/db/hello'), dependencies())
+test('GET /db/hello writes and reads a MongoDB document', async () => {
+  const response = await handle(new Request('http://localhost/db/hello'), dependencies())
   expect(response.status).toBe(200)
   expect(await response.json()).toEqual({ message: 'hello from MongoDB' })
 })

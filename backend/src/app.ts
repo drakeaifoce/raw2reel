@@ -48,7 +48,7 @@ export async function handle(
   const url = new URL(request.url)
   const { pathname } = url
 
-  if (pathname === '/api/media' && request.method === 'POST') {
+  if (pathname === '/media' && request.method === 'POST') {
     if (!dependencies.media)
       return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
     const contentLength = Number(request.headers.get('content-length') ?? 0)
@@ -71,7 +71,7 @@ export async function handle(
     return json(await dependencies.media.create(file), 201)
   }
 
-  if (pathname === '/api/media' && request.method === 'GET') {
+  if (pathname === '/media' && request.method === 'GET') {
     if (!dependencies.media)
       return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
     const rawLimit = url.searchParams.get('limit') ?? '20'
@@ -82,7 +82,7 @@ export async function handle(
     return json({ items: await dependencies.media.list(limit) })
   }
 
-  const mediaMatch = pathname.match(/^\/api\/media\/([^/]+)$/)
+  const mediaMatch = pathname.match(/^\/media\/([^/]+)$/)
   if (mediaMatch && request.method === 'GET') {
     if (!dependencies.media)
       return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
@@ -100,11 +100,13 @@ export async function handle(
         'content-length': String(stored.metadata.size),
         'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(stored.metadata.name)}`,
         'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
       },
     })
   }
 
-  if (pathname === '/api/db/hello' && request.method === 'GET') {
+  if (pathname === '/db/hello' && request.method === 'GET') {
     if (!dependencies.database)
       return error('database is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
     return json(await dependencies.database.hello())
