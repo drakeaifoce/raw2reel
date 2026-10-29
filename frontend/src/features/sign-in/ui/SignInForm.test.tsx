@@ -62,8 +62,8 @@ describe('SignInForm', () => {
     expect(await screen.findByText('Studio opened')).toBeDefined()
   })
 
-  test('creates an account with name, email and password', async () => {
-    auth.identitySignUp.mockResolvedValue({ ok: true, status: 202 })
+  test('opens the studio after synchronous HTTP 200 account creation', async () => {
+    auth.identitySignUp.mockResolvedValue(new Response(null, { status: 200 }))
     renderForm()
 
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
@@ -79,10 +79,8 @@ describe('SignInForm', () => {
         password: 'correct-password',
       }),
     )
-    expect(screen.queryByText('Studio opened')).toBeNull()
-    expect((await screen.findByRole('status')).textContent).toBe(
-      'Account creation started. Sign in when registration is complete.',
-    )
+    expect(await screen.findByText('Studio opened')).toBeDefined()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   test('shows a generic error for invalid credentials', async () => {

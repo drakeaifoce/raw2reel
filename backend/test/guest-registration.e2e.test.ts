@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { memoryAdapter, type MemoryDB } from '@better-auth/memory-adapter'
+import { createAuthServiceWithDatabase } from '../src/auth'
 import { handle, type AuthService } from '../src/app'
 import { IdentityService, MemoryIdentityStore } from '../src/identity'
 import type { MediaMetadata, MediaRepository } from '../src/media'
@@ -28,6 +30,57 @@ class MemoryOperations implements RegistrationOperationRepository {
 }
 
 describe('guest registration ownership flow', () => {
+  test('ordinary web signup returns HTTP 200 with an authenticated session and access token', async () => {
+    const origin = 'http://localhost:5173'
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), {
+      baseUrl: origin,
+      secret: 'test-only-secret-with-at-least-32-characters',
+      trustedOrigins: [origin],
+    })
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const unused = async (): Promise<never> => {
+      throw new Error('ordinary signup must not access media')
+    }
+    const media: MediaRepository = {
+      create: unused,
+      list: unused,
+      get: unused,
+      transferOwner: unused,
+    }
+    const registration = new RegistrationOrchestrator(new MemoryOperations(), auth, identity, media)
+    const response = await handle(
+      new Request(`${origin}/identity/web/sign-up`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Editor',
+          email: 'ordinary@example.com',
+          password: 'Password1!',
+          mode: 'new',
+        }),
+      }),
+      { auth, identity, registration, identityWebOrigins: [origin] },
+    )
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      status: string
+      accessToken: string
+      refreshToken?: string
+    }
+    expect(body.status).toBe('completed')
+    expect(body.refreshToken).toBeUndefined()
+    const principal = await identity.authenticateAccess(body.accessToken)
+    expect(principal).not.toBeNull()
+    const cookie = response.headers
+      .getSetCookie()
+      .map((value) => value.split(';', 1)[0])
+      .join('; ')
+    const session = await auth.getSession(new Headers({ cookie }))
+    expect(session?.user.id).toBe(principal?.userId)
+    expect(session?.user.isAnonymous).toBe(false)
+  })
+
   test('keeps uploaded media for the new account and hides it from another owner', async () => {
     const store = new IdentityService(new MemoryIdentityStore())
     const guestSessionToken = 'guest-session-token'

@@ -12,13 +12,11 @@ export function SignInForm() {
   const [pending, setPending] = useState(false)
   const [guestPending, setGuestPending] = useState(false)
   const [error, setError] = useState('')
-  const [status, setStatus] = useState('')
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setPending(true)
     setError('')
-    setStatus('')
     const form = new FormData(event.currentTarget)
     const email = String(form.get('email') ?? '')
     const password = String(form.get('password') ?? '')
@@ -31,12 +29,8 @@ export function SignInForm() {
               password,
               name: String(form.get('name') ?? ''),
             })
-      if (mode === 'sign-in' && result.ok) {
+      if (result.ok) {
         void navigate(routes.studio, { replace: true })
-        return
-      }
-      if (mode === 'sign-up' && result.status === 202) {
-        setStatus('Account creation started. Sign in when registration is complete.')
         return
       }
     } catch {
@@ -98,7 +92,6 @@ export function SignInForm() {
             {error}
           </p>
         )}
-        {status && <output>{status}</output>}
         <Button type="submit" size="md" disabled={pending}>
           {pending ? 'Please wait…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
