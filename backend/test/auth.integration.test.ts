@@ -71,7 +71,9 @@ describe('Better Auth lifecycle', () => {
         headers: { cookie: firstCookie },
       }),
     )
-    expect(deletion.status).toBe(404)
+    // Better Auth 1.7.14 keeps the route but rejects it when deletion is
+    // disabled. The security contract is fail-closed, not route absence.
+    expect(deletion.status).toBe(400)
     expect(await auth.getSession(new Headers({ cookie: firstCookie }))).not.toBeNull()
   })
 
