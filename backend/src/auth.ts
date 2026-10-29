@@ -112,5 +112,42 @@ export function createAuthServiceWithDatabase(
         sessionCookie,
       }
     },
+    signInEmail: async (headers, input) => {
+      const requestHeaders = new Headers(headers)
+      requestHeaders.set('content-type', 'application/json')
+      const response = await auth.handler(
+        new Request(new URL('/api/auth/sign-in/email', baseUrl.origin).toString(), {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(input),
+        }),
+      )
+      if (!response.ok) return null
+      const body = (await response.json()) as {
+        token?: unknown
+        user?: { id?: unknown; isAnonymous?: unknown }
+      }
+      const sessionCookie = response.headers.get('set-cookie')
+      if (
+        typeof body.token !== 'string' ||
+        typeof body.user?.id !== 'string' ||
+        body.user.isAnonymous === true ||
+        !sessionCookie
+      ) {
+        return null
+      }
+      return {
+        user: { id: body.user.id, isAnonymous: false },
+        sessionToken: body.token,
+        sessionCookie,
+      }
+    },
+    signOut: (headers) =>
+      auth.handler(
+        new Request(new URL('/api/auth/sign-out', baseUrl.origin).toString(), {
+          method: 'POST',
+          headers,
+        }),
+      ),
   }
 }

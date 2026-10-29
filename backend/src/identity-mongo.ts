@@ -73,12 +73,34 @@ export class MongoIdentityRepository implements IdentityRepository {
   ) {}
 
   async create({ owner, family }: CreateIdentity): Promise<void> {
-    await this.createGuestOwner({
-      userId: owner.userId,
-      now: owner.lastActiveAt,
-      familyId: family.familyId,
+    await this.owners.insertOne({
+      _id: owner.userId,
+      kind: owner.kind,
+      state: owner.state,
+      lastActiveAt: owner.lastActiveAt,
+      credentialEpoch: owner.credentialEpoch,
+    })
+    try {
+      await this.createFamily(family)
+    } catch (error) {
+      await this.owners.deleteOne({
+        _id: owner.userId,
+        credentialEpoch: owner.credentialEpoch,
+        state: owner.state,
+      })
+      throw error
+    }
+  }
+
+  async createFamily(family: IdentityFamily): Promise<void> {
+    await this.families.insertOne({
+      _id: family.familyId,
+      userId: family.userId,
+      credentialEpoch: family.credentialEpoch,
       sessionBindingHash: family.sessionBindingHash,
-      refreshHash: family.refreshHash,
+      generation: family.usedRefreshHashes.size,
+      currentRefreshHash: family.refreshHash,
+      usedRefreshHashes: [...family.usedRefreshHashes],
       absoluteExpiresAt: family.absoluteExpiresAt,
       access: family.access,
     })
@@ -115,6 +137,16 @@ export class MongoIdentityRepository implements IdentityRepository {
 
   revokeReuse(_familyId: string, hash: string, now: number) {
     return this.revokeForRefreshReuse(hash, now)
+  }
+
+  async revokeFamily(familyId: string, hash: string, now: number) {
+    return (
+      (await this.families.findOneAndUpdate(
+        { _id: familyId, currentRefreshHash: hash, revokedAt: { $exists: false } },
+        { $set: { revokedAt: now } },
+        { returnDocument: 'after' },
+      )) !== null
+    )
   }
 
   async touch(userId: string, now: number) {

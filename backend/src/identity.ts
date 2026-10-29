@@ -36,6 +36,7 @@ export type CreateIdentity = { owner: IdentityOwner; family: IdentityFamily }
 
 export interface IdentityRepository {
   create(input: CreateIdentity): Promise<void>
+  createFamily(family: IdentityFamily): Promise<void>
   findAccess(
     hash: string,
     now: number,
@@ -50,6 +51,7 @@ export interface IdentityRepository {
     access: IdentityAccess,
   ): Promise<IdentityFamily | null>
   revokeReuse(familyId: string, hash: string, now: number): Promise<boolean>
+  revokeFamily(familyId: string, hash: string, now: number): Promise<boolean>
   touch(userId: string, now: number): Promise<boolean>
   revokeAll(userId: string, epoch: number, now: number): Promise<boolean>
   claimUpgrade(userId: string, epoch: number, operationId: string): Promise<boolean>
@@ -63,6 +65,11 @@ export class MemoryIdentityStore implements IdentityRepository {
   async create({ owner, family }: CreateIdentity) {
     if (this.owners.has(owner.userId)) throw new Error('identity already exists')
     this.owners.set(owner.userId, owner)
+    this.families.set(family.familyId, family)
+  }
+
+  async createFamily(family: IdentityFamily) {
+    if (this.families.has(family.familyId)) throw new Error('identity family already exists')
     this.families.set(family.familyId, family)
   }
 
@@ -101,6 +108,13 @@ export class MemoryIdentityStore implements IdentityRepository {
   async revokeReuse(familyId: string, hash: string, now: number) {
     const family = this.families.get(familyId)
     if (!family?.usedRefreshHashes.has(hash) || family.revokedAt !== undefined) return false
+    family.revokedAt = now
+    return true
+  }
+
+  async revokeFamily(familyId: string, hash: string, now: number) {
+    const family = this.families.get(familyId)
+    if (!family || family.refreshHash !== hash || family.revokedAt !== undefined) return false
     family.revokedAt = now
     return true
   }
@@ -200,6 +214,25 @@ export class IdentityService {
     return created.pair
   }
 
+  async registerRegistered(userId: string, sessionToken: string): Promise<TokenPair> {
+    const now = this.now().getTime()
+    const existing = await this.store.findOwner(userId)
+    if (existing && (existing.kind !== 'registered' || existing.state !== 'active')) {
+      throw new Error('identity owner is not available for sign-in')
+    }
+    const owner: IdentityOwner = existing ?? {
+      userId,
+      kind: 'registered',
+      state: 'active',
+      lastActiveAt: now,
+      credentialEpoch: 0,
+    }
+    const created = await this.newFamily(owner, now, sessionToken)
+    if (existing) await this.store.createFamily(created.family)
+    else await this.store.create({ owner, family: created.family })
+    return created.pair
+  }
+
   async authenticateAccess(accessToken: string): Promise<Principal | null> {
     const hash = await hashCredential(accessToken)
     const now = this.now().getTime()
@@ -280,6 +313,14 @@ export class IdentityService {
     const found = await this.store.findAccess(await hashCredential(accessToken), now)
     if (!found) return false
     return this.store.revokeAll(principal.userId, found.owner.credentialEpoch, now)
+  }
+
+  async revokeRefresh(refreshToken: string): Promise<boolean> {
+    const hash = await hashCredential(refreshToken)
+    const found = await this.store.findRefresh(hash)
+    const now = this.now().getTime()
+    if (!found || found.reused || !this.validFamily(found.owner, found.family, now)) return false
+    return this.store.revokeFamily(found.family.familyId, hash, now)
   }
 
   async claimUpgradeWithAccess(accessToken: string): Promise<UpgradeClaim> {

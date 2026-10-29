@@ -21,11 +21,21 @@ export type GuestAuthSession = {
   sessionToken: string
   sessionCookie: string
 }
+export type RegisteredAuthSession = {
+  user: AuthenticatedUser & { isAnonymous: false }
+  sessionToken: string
+  sessionCookie: string
+}
 
 export interface AuthService {
   handler(request: Request): Promise<Response>
   getSession(headers: Headers): Promise<AuthSession | null>
   createGuest?(headers: Headers): Promise<GuestAuthSession | null>
+  signInEmail?(
+    headers: Headers,
+    input: { email: string; password: string },
+  ): Promise<RegisteredAuthSession | null>
+  signOut?(headers: Headers): Promise<Response>
 }
 
 export type RegistrationInput = {
@@ -72,11 +82,13 @@ export type AppDependencies = {
     IdentityService,
     | 'authenticateAccess'
     | 'registerGuest'
+    | 'registerRegistered'
     | 'refresh'
     | 'refreshCsrfToken'
     | 'matchesRefreshCsrf'
     | 'recordActivity'
     | 'revokeAll'
+    | 'revokeRefresh'
     | 'claimUpgradeWithAccess'
     | 'claimUpgradeWithRefresh'
   >
@@ -140,6 +152,7 @@ const webTokenBody = ({ refreshToken: _refreshToken, ...pair }: TokenPair) => ({
 })
 const refreshCookie = (token: string, expiresAt: string) =>
   `${refreshCookieName}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires=${new Date(expiresAt).toUTCString()}`
+const clearRefreshCookie = `${refreshCookieName}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
 const isEmptyJson = async (request: Request) => {
   if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') return false
   try {
@@ -147,6 +160,25 @@ const isEmptyJson = async (request: Request) => {
     return typeof body === 'object' && body !== null && Object.keys(body).length === 0
   } catch {
     return false
+  }
+}
+const readCredentials = async (request: Request) => {
+  if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') return
+  try {
+    const body: unknown = await request.json()
+    if (typeof body !== 'object' || body === null) return
+    const value = body as Record<string, unknown>
+    if (Object.keys(value).sort().join(',') !== 'email,password') return
+    if (
+      typeof value.email !== 'string' ||
+      !value.email ||
+      typeof value.password !== 'string' ||
+      !value.password
+    )
+      return
+    return { email: value.email, password: value.password }
+  } catch {
+    return
   }
 }
 const isAllowedType = (type: string, allowed: string[]) =>
@@ -263,6 +295,85 @@ export async function handle(
     const response = json(webTokenBody(pair), 201)
     response.headers.append('set-cookie', guest.sessionCookie)
     response.headers.append('set-cookie', refreshCookie(pair.refreshToken, pair.refreshExpiresAt))
+    return response
+  }
+
+  if (
+    (pathname === '/identity/api/sign-in' || pathname === '/identity/web/sign-in') &&
+    request.method === 'POST'
+  ) {
+    const isWeb = pathname === '/identity/web/sign-in'
+    if (!dependencies.auth?.signInEmail) {
+      return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    if (isWeb) {
+      if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+        return identityError('ORIGIN_REJECTED', 403)
+      }
+      if (request.headers.has('authorization')) return identityError('INVALID_REQUEST', 400)
+    } else {
+      const rejected = rejectApiBrowserTransport(request)
+      if (rejected) return rejected
+    }
+    const credentials = await readCredentials(request)
+    if (!credentials) return identityError('INVALID_REQUEST', 400)
+    const signedIn = await dependencies.auth.signInEmail(request.headers, credentials)
+    if (!signedIn || signedIn.user.isAnonymous) return identityError('INVALID_CREDENTIAL', 401)
+    const pair = await dependencies.identity!.registerRegistered(
+      signedIn.user.id,
+      signedIn.sessionToken,
+    )
+    if (!isWeb) return json(pair)
+    const response = json(webTokenBody(pair))
+    response.headers.append('set-cookie', signedIn.sessionCookie)
+    response.headers.append('set-cookie', refreshCookie(pair.refreshToken, pair.refreshExpiresAt))
+    return response
+  }
+
+  if (
+    (pathname === '/identity/api/logout' || pathname === '/identity/web/logout') &&
+    request.method === 'POST'
+  ) {
+    const isWeb = pathname === '/identity/web/logout'
+    let token: string | undefined
+    if (isWeb) {
+      if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+        return identityError('ORIGIN_REJECTED', 403)
+      }
+      if (!(await isEmptyJson(request))) return identityError('INVALID_REQUEST', 400)
+      token = readRefreshCookie(request)
+      const csrf = request.headers.get('x-csrf-token')
+      if (!token || !csrf || !(await dependencies.identity!.matchesRefreshCsrf(token, csrf))) {
+        return identityError('CSRF_REJECTED', 403)
+      }
+    } else {
+      const rejected = rejectApiBrowserTransport(request)
+      if (rejected) return rejected
+      if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') {
+        return identityError('INVALID_REQUEST', 400)
+      }
+      try {
+        const body = (await request.json()) as Record<string, unknown>
+        if (Object.keys(body).length !== 1 || typeof body.refreshToken !== 'string') {
+          return identityError('INVALID_REQUEST', 400)
+        }
+        token = body.refreshToken
+      } catch {
+        return identityError('INVALID_REQUEST', 400)
+      }
+    }
+    if (!(await dependencies.identity!.revokeRefresh(token))) {
+      return identityError('INVALID_CREDENTIAL', 401)
+    }
+    if (!isWeb) return new Response(null, { status: 204 })
+    const authResponse = dependencies.auth?.signOut
+      ? await dependencies.auth.signOut(request.headers)
+      : undefined
+    const response = new Response(null, { status: authResponse?.ok === false ? 503 : 204 })
+    for (const cookie of authResponse?.headers.getSetCookie() ?? []) {
+      response.headers.append('set-cookie', cookie)
+    }
+    response.headers.append('set-cookie', clearRefreshCookie)
     return response
   }
 

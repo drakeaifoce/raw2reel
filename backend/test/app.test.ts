@@ -248,6 +248,94 @@ describe('/identity guest entry', () => {
   })
 })
 
+describe('/identity registered sign-in and logout', () => {
+  const origin = 'https://raw2reel.studio'
+  const registeredAuth = {
+    handler: async () => new Response('unused'),
+    getSession: async () => null,
+    signInEmail: async () => ({
+      user: { id: 'registered-user', isAnonymous: false as const },
+      sessionToken: 'better-auth-registered-session',
+      sessionCookie: 'better-auth.session_token=registered; HttpOnly; SameSite=Lax; Path=/',
+    }),
+    signOut: async () => new Response(null, { status: 204 }),
+  }
+
+  test('issues registered API credentials without exposing a Better Auth cookie', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const response = await handle(
+      new Request('http://localhost/identity/api/sign-in', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com', password: 'Password1!' }),
+      }),
+      { auth: registeredAuth, identity },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(await response.json()).toMatchObject({
+      tokenType: 'Bearer',
+      user: { id: 'registered-user', isAnonymous: false },
+    })
+  })
+
+  test('uses cookie transport for web sign-in and revokes it on CSRF-protected logout', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const signIn = await handle(
+      new Request('http://localhost/identity/web/sign-in', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com', password: 'Password1!' }),
+      }),
+      { auth: registeredAuth, identity, identityWebOrigins: [origin] },
+    )
+    expect(signIn.status).toBe(200)
+    expect(signIn.headers.get('set-cookie')).toContain('__Host-r2r-refresh=')
+    const refreshCookie = signIn.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith('__Host-r2r-refresh='))!
+      .split(';', 1)[0]!
+    const refreshToken = refreshCookie.split('=', 2)[1]!
+    const csrf = await identity.refreshCsrfToken(refreshToken)
+
+    const logout = await handle(
+      new Request('http://localhost/identity/web/logout', {
+        method: 'POST',
+        headers: {
+          origin,
+          cookie: `${refreshCookie}; better-auth.session_token=registered`,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: '{}',
+      }),
+      { auth: registeredAuth, identity, identityWebOrigins: [origin] },
+    )
+    expect(logout.status).toBe(204)
+    expect(logout.headers.get('set-cookie')).toContain('__Host-r2r-refresh=;')
+    expect(await identity.refresh(refreshToken)).toBeNull()
+  })
+
+  test('revokes an API family using only its refresh credential', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const pair = await identity.registerRegistered(
+      'registered-user',
+      'better-auth-registered-session',
+    )
+    const response = await handle(
+      new Request('http://localhost/identity/api/logout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: pair.refreshToken }),
+      }),
+      { identity },
+    )
+    expect(response.status).toBe(204)
+    expect(await identity.refresh(pair.refreshToken)).toBeNull()
+  })
+})
+
 describe('/identity/web refresh transport', () => {
   const origin = 'https://raw2reel.studio'
   const identityFixture = async () => {
