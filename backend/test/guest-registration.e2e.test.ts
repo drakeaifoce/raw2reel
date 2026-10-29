@@ -203,15 +203,14 @@ describe('guest registration ownership flow', () => {
     const registration = new RegistrationOrchestrator(operations, auth, identity, media)
     const origin = 'https://raw2reel.studio'
     const cookie = `__Host-r2r-refresh=${guestPair.refreshToken}`
-    const csrf = await identity.refreshCsrfToken(guestPair.refreshToken)
-    const request = () =>
+    const request = (csrfToken: string) =>
       new Request('http://localhost/identity/web/sign-up', {
         method: 'POST',
         headers: {
           origin,
           cookie,
           'content-type': 'application/json',
-          'x-csrf-token': csrf!,
+          'x-csrf-token': csrfToken,
         },
         body: JSON.stringify({
           email: 'recovery@example.com',
@@ -228,11 +227,37 @@ describe('guest registration ownership flow', () => {
       identityWebOrigins: [origin],
     }
 
-    await expect(handle(request(), dependencies)).rejects.toThrow('final operation write failed')
+    const initialCsrf = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'POST',
+        headers: { origin, cookie, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(initialCsrf.status).toBe(200)
+    const initialCsrfToken = ((await initialCsrf.json()) as { csrfToken: string }).csrfToken
+
+    await expect(handle(request(initialCsrfToken), dependencies)).rejects.toThrow(
+      'final operation write failed',
+    )
     expect(operations.operation?.state).toBe('completion-recorded')
     expect(await identity.authenticateAccess(guestPair.accessToken)).toBeNull()
 
-    const recovered = await handle(request(), dependencies)
+    // A reloaded client does not retain the old CSRF token. It must be able to
+    // bootstrap a fresh, recovery-only token with the invalidated guest family.
+    const recoveryCsrf = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'POST',
+        headers: { origin, cookie, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(recoveryCsrf.status).toBe(200)
+    const recoveryCsrfToken = ((await recoveryCsrf.json()) as { csrfToken: string }).csrfToken
+
+    const recovered = await handle(request(recoveryCsrfToken), dependencies)
     expect(recovered.status).toBe(200)
     expect(recovered.headers.getSetCookie()).toHaveLength(2)
     expect(operations.operation?.state).toBe('completed')
@@ -243,7 +268,18 @@ describe('guest registration ownership flow', () => {
 
     // A completed request whose response was lost is recoverable with the same
     // operation proof and returns a fresh registered handoff.
-    const lostResponseRetry = await handle(request(), dependencies)
+    const lostResponseCsrf = await handle(
+      new Request('http://localhost/identity/web/csrf', {
+        method: 'POST',
+        headers: { origin, cookie, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      dependencies,
+    )
+    expect(lostResponseCsrf.status).toBe(200)
+    const lostResponseCsrfToken = ((await lostResponseCsrf.json()) as { csrfToken: string })
+      .csrfToken
+    const lostResponseRetry = await handle(request(lostResponseCsrfToken), dependencies)
     expect(lostResponseRetry.status).toBe(200)
     expect(operations.operation?.state).toBe('completed')
 

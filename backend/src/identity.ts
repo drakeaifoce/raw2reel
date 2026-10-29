@@ -319,12 +319,16 @@ export class IdentityService {
       !found ||
       found.reused ||
       found.family.revokedAt !== undefined ||
-      found.family.absoluteExpiresAt <= now ||
-      (found.owner.state !== 'active' && found.owner.state !== 'upgrading') ||
-      found.owner.credentialEpoch !== found.family.credentialEpoch
+      found.family.absoluteExpiresAt <= now
     ) {
       return null
     }
+    const currentFamily =
+      (found.owner.state === 'active' || found.owner.state === 'upgrading') &&
+      found.owner.credentialEpoch === found.family.credentialEpoch
+    const completionRecovery =
+      this.completedUpgradeRecovery(found.owner, found.family, now).status === 'claimed'
+    if (!currentFamily && !completionRecovery) return null
     return csrfForRefresh(refreshToken)
   }
 
