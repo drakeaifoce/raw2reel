@@ -59,11 +59,24 @@ export const identityClient = {
       method: 'POST',
       body: JSON.stringify(credentials),
     }).then(rememberAccess),
-  signUp: (input: { email: string; password: string; name: string }) =>
-    identityRequest('/api/identity/web/sign-up', {
+  async signUp(input: { email: string; password: string; name: string; upgrade?: boolean }) {
+    let csrfToken: string | undefined
+    if (input.upgrade) {
+      const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
+      if (!csrf.ok) return csrf
+      csrfToken = ((await csrf.json()) as { csrfToken: string }).csrfToken
+    }
+    return identityRequest('/api/identity/web/sign-up', {
       method: 'POST',
-      body: JSON.stringify({ ...input, mode: 'new' }),
-    }),
+      headers: csrfToken ? { 'x-csrf-token': csrfToken } : undefined,
+      body: JSON.stringify({
+        email: input.email,
+        password: input.password,
+        name: input.name,
+        mode: input.upgrade ? 'upgrade' : 'new',
+      }),
+    })
+  },
   startGuest: () =>
     identityRequest('/api/identity/web/guest', { method: 'POST', body: '{}' }).then(rememberAccess),
   async refresh() {
