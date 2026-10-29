@@ -8,6 +8,9 @@ export type Config = {
   version: string
   mongoUrl: string | undefined
   mongoDb: string
+  betterAuthSecret: string | undefined
+  betterAuthUrl: string | undefined
+  betterAuthTrustedOrigins: string[]
   blobConnectionString: string | undefined
   blobContainerUploads: string
   blobContainerRenders: string
@@ -27,6 +30,12 @@ export const config: Config = {
   version: process.env.GIT_SHA ?? 'dev',
   mongoUrl: process.env.MONGO_URL,
   mongoDb: process.env.MONGO_DB ?? 'raw2reel',
+  betterAuthSecret: process.env.BETTER_AUTH_SECRET,
+  betterAuthUrl: process.env.BETTER_AUTH_URL,
+  betterAuthTrustedOrigins: (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
   blobConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   blobContainerUploads: process.env.AZURE_BLOB_CONTAINER_UPLOADS ?? 'uploads',
   blobContainerRenders: process.env.AZURE_BLOB_CONTAINER_RENDERS ?? 'renders',

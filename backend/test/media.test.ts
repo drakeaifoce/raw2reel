@@ -13,6 +13,10 @@ const metadata: MediaMetadata = {
 
 function dependencies(overrides: Partial<AppDependencies> = {}): AppDependencies {
   return {
+    auth: {
+      handler: async () => new Response('unused'),
+      getSession: async () => ({ user: { id: 'user-1', email: 'editor@example.com' } }),
+    },
     media: {
       create: async () => metadata,
       get: async () => ({ metadata, body: new Blob(['test']).stream() }),
@@ -24,6 +28,21 @@ function dependencies(overrides: Partial<AppDependencies> = {}): AppDependencies
 }
 
 describe('media API', () => {
+  test('media routes require a server-validated session', async () => {
+    const response = await handle(
+      new Request('http://localhost/media', { headers: { 'x-user-id': 'forged-user' } }),
+      dependencies({
+        auth: {
+          handler: async () => new Response('unused'),
+          getSession: async () => null,
+        },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(await response.json()).toMatchObject({ code: 'UNAUTHORIZED' })
+  })
+
   test('POST /media uploads an allowed file', async () => {
     const form = new FormData()
     form.set('file', new File(['test'], 'clip.mp4', { type: 'video/mp4' }))

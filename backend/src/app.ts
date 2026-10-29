@@ -2,6 +2,20 @@ import { config } from './config'
 import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
 import { createMediaService, type MediaRepository } from './media'
+import { createAuthService } from './auth'
+
+export type AuthenticatedUser = {
+  id: string
+  email: string
+  name?: string
+}
+
+export type AuthSession = { user: AuthenticatedUser }
+
+export interface AuthService {
+  handler(request: Request): Promise<Response>
+  getSession(headers: Headers): Promise<AuthSession | null>
+}
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -21,6 +35,7 @@ const json = (body: unknown, status = 200) =>
  * не поднимая сервер и не занимая порт.
  */
 export type AppDependencies = {
+  auth?: AuthService
   media?: MediaRepository
   database?: DatabaseRepository
   allowedMediaTypes?: string[]
@@ -28,6 +43,7 @@ export type AppDependencies = {
 }
 
 const defaultDependencies: AppDependencies = {
+  auth: createAuthService(config),
   media: createMediaService(config),
   database: createDatabaseService(config),
   allowedMediaTypes: config.mediaAllowedTypes,
@@ -41,12 +57,34 @@ const isAllowedType = (type: string, allowed: string[]) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
   )
 
+export async function requireSession(
+  request: Request,
+  auth: AuthService | undefined,
+): Promise<AuthSession | Response> {
+  if (!auth) return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+  const session = await auth.getSession(request.headers)
+  return session ?? error('authentication required', 'UNAUTHORIZED', 401)
+}
+
 export async function handle(
   request: Request,
   dependencies: AppDependencies = defaultDependencies,
 ): Promise<Response> {
   const url = new URL(request.url)
   const { pathname } = url
+
+  if (pathname === '/auth' || pathname.startsWith('/auth/')) {
+    if (!dependencies.auth)
+      return error('authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    const publicUrl = new URL(request.url)
+    publicUrl.pathname = `/api${pathname}`
+    return dependencies.auth.handler(new Request(publicUrl.toString(), request))
+  }
+
+  if (pathname === '/media' || pathname.startsWith('/media/') || pathname === '/db/hello') {
+    const session = await requireSession(request, dependencies.auth)
+    if (session instanceof Response) return session
+  }
 
   if (pathname === '/media' && request.method === 'POST') {
     if (!dependencies.media)

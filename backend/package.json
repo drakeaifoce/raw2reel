@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@azure/storage-blob": "^12.28.0",
+    "@better-auth/mongo-adapter": "1.7.14",
+    "better-auth": "1.7.14",
     "mongodb": "^6.21.0"
   },
   "devDependencies": {

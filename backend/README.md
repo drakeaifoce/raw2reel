@@ -1,6 +1,6 @@
 # backend
 
-Bun HTTP API: health/readiness, загрузка и выдача медиа через Azure Blob,
+Bun HTTP API: Better Auth, health/readiness, загрузка и выдача медиа через Azure Blob,
 метаданные в MongoDB и минимальный сквозной пример работы с базой.
 
 ## Стек
@@ -42,6 +42,9 @@ bun run dev
 
 ### Медиа
 
+Все media-маршруты требуют действующую серверную сессию Better Auth. Заголовки
+вроде `X-User-Id` не считаются identity. Неавторизованный запрос получает 401.
+
 `POST /api/media` принимает `multipart/form-data` с полем `file`. Допустимые
 MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
 `video/*,image/*,audio/*`), максимальный размер — `MAX_MEDIA_SIZE_BYTES`
@@ -68,19 +71,35 @@ MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
 соответствующим статусом 400, 404, 413 или 415. Если MongoDB или Blob не
 настроены, API отвечает 503 с кодом `DEPENDENCY_UNAVAILABLE`.
 
-### Пример MongoDB
+### Авторизация
 
-`GET /api/db/hello` делает upsert документа в коллекцию `examples`, читает его
+Публичные маршруты Better Auth находятся под `/api/auth/*`; Caddy снимает
+`/api`, а backend восстанавливает публичный путь перед передачей запроса в
+Better Auth. Доступны email/password signup, signin, signout и get-session.
+
+Нужны `BETTER_AUTH_SECRET` (не менее 32 случайных символов),
+`BETTER_AUTH_URL` и существующие `MONGO_URL`/`MONGO_DB`. Дополнительные origin
+для локальной разработки задаются через `BETTER_AUTH_TRUSTED_ORIGINS`.
+Production release нельзя выполнять без безопасно настроенного secret.
+
+Mongo adapter намеренно работает с `transaction: false`: Cosmos DB for MongoDB
+ограничивает транзакции одной unsharded collection, а signup пишет несколько
+auth-коллекций. Это оставляет риск частичной записи при сбое между операциями,
+но не требует несовместимых cross-collection transactions.
+
+### Защищённый пример MongoDB
+
+`GET /api/db/hello` требует сессию, делает upsert документа в коллекцию `examples`, читает его
 обратно и отвечает `{ "message": "hello from MongoDB" }`.
 
 ## Ручная проверка
 
 ```bash
 # Через публичный Caddy (замените localhost на адрес развёрнутого приложения):
-curl -sS -F 'file=@./clip.mp4;type=video/mp4' http://localhost/api/media
+curl -sS -F 'file=@./clip.mp4;type=video/mp4' http://localhost/api/media # с session cookie
 curl -sS 'http://localhost/api/media?limit=10'
 curl -OJ http://localhost/api/media/<id>
-curl -sS http://localhost/api/db/hello
+curl -sS http://localhost/api/db/hello # с session cookie
 
 # Напрямую к backend, минуя Caddy:
 curl -sS -F 'file=@./clip.mp4;type=video/mp4' http://localhost:3000/media
