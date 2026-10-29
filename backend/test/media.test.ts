@@ -282,4 +282,27 @@ describe('media repository ownership boundary', () => {
     expect(await repository.list(20, 'user-1')).toEqual([metadata])
     expect(filter).toEqual({ ownerId: 'user-1' })
   })
+
+  test('transfers only the proven guest owner with an idempotency operation id', async () => {
+    let filter: unknown
+    let update: unknown
+    const collection = {
+      createIndex: async () => 'index',
+      updateMany: async (receivedFilter: unknown, receivedUpdate: unknown) => {
+        filter = receivedFilter
+        update = receivedUpdate
+        return { modifiedCount: 2 }
+      },
+    }
+    const repository = new MediaService(collection as never, {} as never)
+
+    expect(await repository.transferOwner('guest-a', 'registered-c', 'operation-1')).toBe(2)
+    expect(filter).toEqual({
+      ownerId: 'guest-a',
+      $or: [{ ownershipOperationId: { $exists: false } }, { ownershipOperationId: 'operation-1' }],
+    })
+    expect(update).toEqual({
+      $set: { ownerId: 'registered-c', ownershipOperationId: 'operation-1' },
+    })
+  })
 })

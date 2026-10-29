@@ -189,10 +189,12 @@ const isAllowedType = (type: string, allowed: string[]) =>
   )
 
 const publicMedia = ({
-  blobKey: _blobKey,
-  ownerId: _ownerId,
-  ...metadata
-}: Awaited<ReturnType<MediaRepository['create']>>) => metadata
+  id,
+  name,
+  type,
+  size,
+  createdAt,
+}: Awaited<ReturnType<MediaRepository['create']>>) => ({ id, name, type, size, createdAt })
 
 type SignUpBody = { email: string; password: string; name: string; mode: 'new' | 'upgrade' }
 

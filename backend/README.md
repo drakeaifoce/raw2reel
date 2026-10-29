@@ -42,8 +42,16 @@ bun run dev
 
 ### Медиа
 
-Все media-маршруты требуют действующую серверную сессию Better Auth. Заголовки
-вроде `X-User-Id` не считаются identity. Неавторизованный запрос получает 401.
+Все media-маршруты требуют либо действующую серверную web-сессию, либо API
+access bearer, выпущенный identity service. Заголовки вроде `X-User-Id` и поля
+`ownerId` не считаются identity. Одновременная cookie и bearer-аутентификация
+отклоняется. Неавторизованный запрос получает 401.
+
+Backend всегда берёт владельца из проверенного credential. Upload сохраняет
+`ownerId` в MongoDB и создаёт Blob key в серверном owner namespace. List и get
+фильтруются по этому `ownerId`; чужой id возвращает тот же 404, что отсутствующий,
+и Blob при этом не читается. Внешний ответ не раскрывает `ownerId`, `blobKey`,
+storage credentials или прямые Blob URL.
 
 `POST /api/media` принимает `multipart/form-data` с полем `file`. Допустимые
 MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
@@ -56,7 +64,6 @@ MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
   "name": "clip.mp4",
   "type": "video/mp4",
   "size": 12345,
-  "blobKey": "0d587a6f-315f-4c28-968a-9e9ab43f156f/clip.mp4",
   "createdAt": "2026-10-29T12:00:00.000Z"
 }
 ```
@@ -66,6 +73,13 @@ MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
 с сохранёнными `Content-Type`, `Content-Length` и именем файла. Ответ также
 содержит `X-Content-Type-Options: nosniff` и sandbox CSP, чтобы загруженный
 контент не мог выполнить скрипт в origin приложения.
+
+Legacy-записи без `ownerId` никому не видны и автоматически не назначаются.
+Будущее назначение владельца должно быть отдельной управляемой миграцией с
+доказанным соответствием. Для guest→registered upgrade repository предоставляет
+идемпотентный server-only перенос по точному прежнему `ownerId` и durable
+`operationId`; клиентские owner identifiers в нём не участвуют. Этот перенос не
+удаляет Blob и не меняет данные чужих или ownerless записей.
 
 Ошибки клиента возвращаются как `{ "error": "...", "code": "..." }` с
 соответствующим статусом 400, 404, 413 или 415. Если MongoDB или Blob не

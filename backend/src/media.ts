@@ -11,6 +11,7 @@ export type MediaMetadata = {
   size: number
   blobKey: string
   createdAt: string
+  ownershipOperationId?: string
 }
 
 export type StoredMedia = { metadata: MediaMetadata; body: ReadableStream<Uint8Array> }
@@ -19,6 +20,7 @@ export interface MediaRepository {
   create(file: File, ownerId: string): Promise<MediaMetadata>
   get(id: string, ownerId: string): Promise<StoredMedia | null>
   list(limit: number, ownerId: string): Promise<MediaMetadata[]>
+  transferOwner?(fromOwnerId: string, toOwnerId: string, operationId: string): Promise<number>
 }
 
 export class MediaService implements MediaRepository {
@@ -79,6 +81,22 @@ export class MediaService implements MediaRepository {
       .sort({ createdAt: -1 })
       .limit(limit)
       .toArray()
+  }
+
+  async transferOwner(
+    fromOwnerId: string,
+    toOwnerId: string,
+    operationId: string,
+  ): Promise<number> {
+    await this.indexesReady
+    const result = await this.collection.updateMany(
+      {
+        ownerId: fromOwnerId,
+        $or: [{ ownershipOperationId: { $exists: false } }, { ownershipOperationId: operationId }],
+      },
+      { $set: { ownerId: toOwnerId, ownershipOperationId: operationId } },
+    )
+    return result.modifiedCount
   }
 }
 
