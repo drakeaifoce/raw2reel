@@ -1,3 +1,4 @@
+import { docsResponse } from './docs'
 import { config } from './config'
 import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
@@ -315,6 +316,8 @@ export async function handle(
 ): Promise<Response> {
   const url = new URL(request.url)
   const { pathname } = url
+  const documentation = docsResponse(request)
+  if (documentation) return documentation
 
   if (pathname === '/auth' || pathname.startsWith('/auth/')) {
     if (!dependencies.auth)
