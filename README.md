@@ -61,6 +61,12 @@ commit sha baked into the image at build time, so it changes on every deploy.
 
 ## CI/CD
 
-Pushes run through Gitea Actions on the deployment host, not GitHub Actions. Only
-the projects touched by a change are built. See [infra/README.md](infra/README.md)
-for the pipeline, rollback behaviour and known trade-offs.
+Push to `main` here on GitHub. A poller on the deployment host carries the commit
+to a Gitea instance running next to the apps, and Gitea Actions build and deploy
+it — only the projects the change touched. Expect up to two minutes before the
+pipeline starts.
+
+GitHub Actions is not used: the deployment host cannot be reached from
+GitHub-hosted runners without repository admin rights. Pull request checks
+therefore do not run — see [infra/README.md](infra/README.md) for the pipeline,
+rollback behaviour and the known trade-offs.
