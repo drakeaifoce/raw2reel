@@ -3,6 +3,7 @@ import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
 import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
+import type { IdentityService } from './identity'
 
 export type AuthenticatedUser = {
   id: string
@@ -43,6 +44,7 @@ export type AppDependencies = {
   database?: DatabaseRepository
   allowedMediaTypes?: string[]
   maxMediaSizeBytes?: number
+  identity?: Pick<IdentityService, 'refresh' | 'recordActivity' | 'revokeAll'>
 }
 
 const defaultDependencies: AppDependencies = {
@@ -55,6 +57,29 @@ const defaultDependencies: AppDependencies = {
 
 const error = (message: string, code: string, status: number) =>
   json({ error: message, code }, status)
+const identityError = (code: string, status: number) =>
+  json(
+    {
+      error: {
+        code,
+        message:
+          code === 'INVALID_REQUEST'
+            ? 'invalid request'
+            : code === 'ORIGIN_REJECTED'
+              ? 'origin rejected'
+              : 'invalid credential',
+      },
+    },
+    status,
+  )
+const bearerToken = (request: Request) => {
+  const match = request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/)
+  return match?.[1]
+}
+const rejectApiBrowserTransport = (request: Request) => {
+  if (request.headers.has('origin')) return identityError('ORIGIN_REJECTED', 403)
+  if (request.headers.has('cookie')) return identityError('INVALID_REQUEST', 400)
+}
 const isAllowedType = (type: string, allowed: string[]) =>
   allowed.some((pattern) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
@@ -82,6 +107,49 @@ export async function handle(
     const publicUrl = new URL(request.url)
     publicUrl.pathname = `/api${pathname}`
     return dependencies.auth.handler(new Request(publicUrl.toString(), request))
+  }
+
+  if (pathname.startsWith('/identity/') && !dependencies.identity) {
+    return error('identity service is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+  }
+
+  if (pathname === '/identity/api/refresh' && request.method === 'POST') {
+    const rejected = rejectApiBrowserTransport(request)
+    if (rejected) return rejected
+    if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Object.keys(body).length !== 1 ||
+      typeof (body as { refreshToken?: unknown }).refreshToken !== 'string'
+    ) {
+      return identityError('INVALID_REQUEST', 400)
+    }
+    const pair = await dependencies.identity!.refresh(
+      (body as { refreshToken: string }).refreshToken,
+    )
+    return pair ? json(pair) : identityError('INVALID_CREDENTIAL', 401)
+  }
+
+  if (
+    (pathname === '/identity/activity' || pathname === '/identity/revoke-all') &&
+    request.method === 'POST'
+  ) {
+    const token = bearerToken(request)
+    if (!token) return identityError('INVALID_CREDENTIAL', 401)
+    const accepted =
+      pathname === '/identity/activity'
+        ? await dependencies.identity!.recordActivity(token)
+        : await dependencies.identity!.revokeAll(token)
+    return accepted ? new Response(null, { status: 204 }) : identityError('INVALID_CREDENTIAL', 401)
   }
 
   if (pathname === '/media' || pathname.startsWith('/media/') || pathname === '/db/hello') {

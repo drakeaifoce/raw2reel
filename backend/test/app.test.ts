@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { handle, type AppDependencies } from '../src/app'
 import { config } from '../src/config'
+import { IdentityService, MemoryIdentityStore } from '../src/identity'
 
 const get = (path: string) => handle(new Request(`http://localhost${path}`))
 
@@ -107,5 +108,80 @@ describe('/ready', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { ready: boolean }
     expect(body.ready).toBe(true)
+  })
+})
+
+describe('/identity/api transport boundary', () => {
+  const identityFixture = async () => {
+    const identity = new IdentityService(new MemoryIdentityStore(), {
+      randomToken: (() => {
+        let sequence = 0
+        return () => `credential-${++sequence}-${'x'.repeat(40)}`
+      })(),
+    })
+    return { identity, pair: await identity.registerGuest('guest-1') }
+  }
+
+  test('rotates API refresh credentials without accepting browser transport', async () => {
+    const { identity, pair } = await identityFixture()
+    const response = await handle(
+      new Request('http://localhost/identity/api/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: pair.refreshToken }),
+      }),
+      { identity },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('set-cookie')).toBeNull()
+    const body = (await response.json()) as { refreshToken: string }
+    expect(body.refreshToken).not.toBe(pair.refreshToken)
+
+    for (const headers of [{ origin: 'https://raw2reel.studio' }, { cookie: 'session=x' }]) {
+      const requestHeaders = new Headers({ 'content-type': 'application/json' })
+      if (headers.origin) requestHeaders.set('origin', headers.origin)
+      if (headers.cookie) requestHeaders.set('cookie', headers.cookie)
+      const rejected = await handle(
+        new Request('http://localhost/identity/api/refresh', {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify({ refreshToken: body.refreshToken }),
+        }),
+        { identity },
+      )
+      expect(rejected.status).toBe(headers.origin ? 403 : 400)
+    }
+  })
+
+  test('requires access bearer for activity and revoke-all', async () => {
+    const { identity, pair } = await identityFixture()
+    const activity = await handle(
+      new Request('http://localhost/identity/activity', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${pair.accessToken}` },
+      }),
+      { identity },
+    )
+    expect(activity.status).toBe(204)
+
+    const revoked = await handle(
+      new Request('http://localhost/identity/revoke-all', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${pair.accessToken}` },
+      }),
+      { identity },
+    )
+    expect(revoked.status).toBe(204)
+
+    const afterRevoke = await handle(
+      new Request('http://localhost/identity/activity', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${pair.accessToken}` },
+      }),
+      { identity },
+    )
+    expect(afterRevoke.status).toBe(401)
   })
 })
