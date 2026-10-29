@@ -73,4 +73,47 @@ describe('guest identity credentials', () => {
     expect(await service.authenticateAccess(current!.accessToken)).toBeNull()
     expect(await service.refresh(current!.refreshToken)).toBeNull()
   })
+
+  test('claims a guest upgrade once and invalidates every old credential', async () => {
+    const store = new MemoryIdentityStore()
+    const service = new IdentityService(store, {
+      randomToken: (() => {
+        let sequence = 0
+        return () => `upgrade-${++sequence}-${'x'.repeat(40)}`
+      })(),
+    })
+    const pair = await service.registerGuest('guest-upgrade')
+
+    const claimed = await service.claimUpgradeWithAccess(pair.accessToken)
+    expect(claimed).toMatchObject({
+      status: 'claimed',
+      principal: { userId: 'guest-upgrade', isAnonymous: true, familyId: pair.familyId },
+    })
+    expect(claimed.status === 'claimed' && claimed.operationId).toBeString()
+    expect(await service.authenticateAccess(pair.accessToken)).toBeNull()
+    expect(await service.refresh(pair.refreshToken)).toBeNull()
+    expect(await service.claimUpgradeWithAccess(pair.accessToken)).toEqual({ status: 'invalid' })
+  })
+
+  test('claims refresh continuity without rotating it and rejects registered identities', async () => {
+    const store = new MemoryIdentityStore()
+    const service = new IdentityService(store, {
+      randomToken: (() => {
+        let sequence = 0
+        return () => `upgrade-refresh-${++sequence}-${'x'.repeat(40)}`
+      })(),
+    })
+    const pair = await service.registerGuest('guest-refresh-upgrade')
+
+    expect(await service.claimUpgradeWithRefresh(pair.refreshToken)).toMatchObject({
+      status: 'claimed',
+      principal: { userId: 'guest-refresh-upgrade', familyId: pair.familyId },
+    })
+
+    const registeredPair = await service.registerGuest('registered-user')
+    store.owners.get('registered-user')!.kind = 'registered'
+    expect(await service.claimUpgradeWithAccess(registeredPair.accessToken)).toEqual({
+      status: 'transition',
+    })
+  })
 })

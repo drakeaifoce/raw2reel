@@ -130,4 +130,29 @@ describe('Mongo identity repository', () => {
     })
     expect(await repository.compareAndIncrementCredentialEpoch('guest-a', 0)).toBeNull()
   })
+
+  test('claims an active guest upgrade exactly once with a durable operation id', async () => {
+    const owners = new FakeCollection<IdentityOwnerDocument>()
+    const families = new FakeCollection<IdentityFamilyDocument>()
+    const repository = new MongoIdentityRepository(owners as never, families as never)
+    await repository.createGuestOwner({
+      userId: 'guest-a',
+      now: 1_000,
+      familyId: 'family-a',
+      refreshHash: 'refresh-1',
+      absoluteExpiresAt: 99_000,
+      access: [],
+    })
+
+    const claims = await Promise.all([
+      repository.claimUpgrade('guest-a', 0, 'operation-a'),
+      repository.claimUpgrade('guest-a', 0, 'operation-b'),
+    ])
+
+    expect(claims.filter(Boolean)).toHaveLength(1)
+    expect(owners.documents.get('guest-a')).toMatchObject({
+      state: 'upgrading',
+      upgradeOperationId: claims[0] ? 'operation-a' : 'operation-b',
+    })
+  })
 })

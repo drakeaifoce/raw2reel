@@ -28,6 +28,7 @@ export type IdentityOwnerDocument = {
   state: 'active' | 'upgrading' | 'deleting' | 'deleted'
   lastActiveAt: number
   credentialEpoch: number
+  upgradeOperationId?: string
 }
 
 export type IdentityFamilyDocument = {
@@ -131,6 +132,16 @@ export class MongoIdentityRepository implements IdentityRepository {
       { $set: { revokedAt: now } },
     )
     return true
+  }
+
+  async claimUpgrade(userId: string, epoch: number, operationId: string) {
+    return (
+      (await this.owners.findOneAndUpdate(
+        { _id: userId, kind: 'guest', state: 'active', credentialEpoch: epoch },
+        { $set: { state: 'upgrading', upgradeOperationId: operationId } },
+        { returnDocument: 'after' },
+      )) !== null
+    )
   }
 
   async findOwner(userId: string): Promise<IdentityOwner | null> {
