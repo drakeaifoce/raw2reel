@@ -4,7 +4,14 @@ import { readiness } from './health'
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      // Ответы этих эндпоинтов кешировать нельзя: /version существует ровно
+      // для того, чтобы показать, какой образ развёрнут сейчас, и прокси,
+      // отдавший старое значение, обессмысливает проверку деплоя. У /ready
+      // та же логика — закешированная готовность хуже отсутствующей.
+      'cache-control': 'no-store',
+    },
   })
 
 /**

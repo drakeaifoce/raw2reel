@@ -22,6 +22,13 @@ describe('маршруты', () => {
     expect(config.version).toBe(process.env.GIT_SHA ?? 'dev')
   })
 
+  test('ответы закрыты от кеширования', async () => {
+    for (const path of ['/health', '/version', '/ready']) {
+      const response = await get(path)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+  })
+
   test('неизвестный путь это 404 с указанием пути', async () => {
     const response = await get('/no-such-path')
     expect(response.status).toBe(404)
