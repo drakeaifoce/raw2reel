@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { handle, type AppDependencies } from '../src/app'
 import { config } from '../src/config'
+import { createOpenAPI } from '../src/openapi'
+import type { OpenAPIV3_1 } from 'openapi-types'
 import { IdentityService, MemoryIdentityStore } from '../src/identity'
 
 const get = (path: string) => handle(new Request(`http://localhost${path}`))
@@ -341,9 +343,20 @@ describe('/identity registered sign-in and logout', () => {
         body: '{}',
       })
 
-    expect(
-      (await handle(makeRequest(), { auth, identity, identityWebOrigins: [origin] })).status,
-    ).toBe(503)
+    const failure = await handle(makeRequest(), { auth, identity, identityWebOrigins: [origin] })
+    expect(failure.status).toBe(503)
+    expect(failure.headers.get('content-type')).toContain('application/json')
+    expect(await failure.json()).toEqual({
+      error: 'authentication sign-out failed',
+      code: 'DEPENDENCY_UNAVAILABLE',
+    })
+    const document = createOpenAPI() as unknown as OpenAPIV3_1.Document
+    const documented = document.paths!['/identity/web/logout']!.post!.responses![
+      '503'
+    ] as OpenAPIV3_1.ResponseObject
+    expect(documented.content!['application/json']!.schema).toEqual({
+      $ref: '#/components/schemas/Error',
+    })
     expect(await identity.refreshCsrfToken(pair.refreshToken)).not.toBeNull()
     expect(
       (await handle(makeRequest(), { auth, identity, identityWebOrigins: [origin] })).status,

@@ -456,7 +456,9 @@ export async function handle(
     const authResponse = dependencies.auth?.signOut
       ? await dependencies.auth.signOut(request.headers)
       : undefined
-    if (authResponse && !authResponse.ok) return new Response(null, { status: 503 })
+    if (authResponse && !authResponse.ok) {
+      return error('authentication sign-out failed', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
     if (!(await dependencies.identity!.revokeRefresh(token))) {
       return identityError('INVALID_CREDENTIAL', 401)
     }
