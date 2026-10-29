@@ -12,10 +12,26 @@ const identityRequest = (path: string, init: RequestInit = {}) =>
 
 let accessToken: string | undefined
 
+const synchronizeSession = async () => {
+  const result = await authClient.getSession()
+  if (result.error) throw result.error
+  const session = authClient.$store.atoms.session!
+  session.set({
+    ...session.get(),
+    data: result.data,
+    error: null,
+    isPending: false,
+    isRefetching: false,
+  })
+}
+
 const rememberAccess = async (response: Response) => {
   if (response.ok) {
     const body = (await response.clone().json()) as { accessToken?: unknown }
-    if (typeof body.accessToken === 'string') accessToken = body.accessToken
+    if (typeof body.accessToken === 'string') {
+      accessToken = body.accessToken
+      await synchronizeSession()
+    }
   }
   return response
 }
@@ -53,7 +69,10 @@ export const identityClient = {
       headers: { 'x-csrf-token': csrfToken },
       body: '{}',
     })
-    if (response.ok) accessToken = undefined
+    if (response.ok) {
+      accessToken = undefined
+      await synchronizeSession()
+    }
     return response
   },
 }
