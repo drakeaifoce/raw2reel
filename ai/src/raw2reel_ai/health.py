@@ -24,7 +24,10 @@ def _check_mongo() -> Dependency:
     try:
         client: MongoClient = MongoClient(settings.mongo_url, serverSelectionTimeoutMS=3000)
         try:
-            client.admin.command("ping")
+            # Именно операция с базой, а не ping: в Cosmos ping отвечает через
+            # шлюз и проходит даже с недействительным ключом, то есть молчит
+            # ровно в том случае, для которого проверка и нужна. Проверено.
+            client[settings.mongo_db].list_collection_names()
         finally:
             client.close()
     except PyMongoError as error:

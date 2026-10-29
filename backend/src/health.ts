@@ -14,7 +14,10 @@ async function checkMongo(): Promise<{ state: DependencyState; detail?: string }
   // Короткий таймаут: /ready опрашивают часто, и висеть на нём нельзя.
   const client = new MongoClient(config.mongoUrl, { serverSelectionTimeoutMS: 3000 })
   try {
-    await client.db(config.mongoDb).command({ ping: 1 })
+    // Именно операция с базой, а не ping: в Cosmos ping отвечает через шлюз и
+    // проходит даже с недействительным ключом, то есть молчит ровно в том
+    // случае, для которого проверка и нужна. Проверено.
+    await client.db(config.mongoDb).listCollections().toArray()
     return { state: 'ok' }
   } catch (error) {
     return { state: 'error', detail: error instanceof Error ? error.message : String(error) }
