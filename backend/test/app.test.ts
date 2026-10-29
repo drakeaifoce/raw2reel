@@ -300,3 +300,150 @@ describe('/identity/web refresh transport', () => {
     }
   })
 })
+
+describe('/identity sign-up transport', () => {
+  const origin = 'https://raw2reel.studio'
+  const credentials = {
+    email: 'guest@example.com',
+    password: 'Password1!',
+    name: 'Guest Editor',
+    mode: 'upgrade' as const,
+  }
+
+  const identityFixture = async () => {
+    const identity = new IdentityService(new MemoryIdentityStore(), {
+      randomToken: (() => {
+        let sequence = 0
+        return () => `signup-credential-${++sequence}-${'x'.repeat(40)}`
+      })(),
+    })
+    return { identity, pair: await identity.registerGuest('guest-signup') }
+  }
+
+  test('claims an API guest upgrade before invoking durable registration', async () => {
+    const { identity, pair } = await identityFixture()
+    let received: Record<string, unknown> | undefined
+    const response = await handle(
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${pair.accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      }),
+      {
+        identity,
+        registration: {
+          signUp: async (input) => {
+            received = input
+            return { status: 'accepted' as const }
+          },
+        },
+      },
+    )
+
+    expect(response.status).toBe(202)
+    expect(received).toMatchObject({
+      email: credentials.email,
+      name: credentials.name,
+      mode: 'upgrade',
+      guest: { userId: 'guest-signup', familyId: pair.familyId },
+    })
+    expect(received?.password).toBe(credentials.password)
+    expect(received?.operationId).toBeString()
+    expect(await identity.authenticateAccess(pair.accessToken)).toBeNull()
+  })
+
+  test('uses HttpOnly refresh continuity, exact Origin and CSRF for web upgrade', async () => {
+    const { identity, pair } = await identityFixture()
+    const cookie = `__Host-r2r-refresh=${pair.refreshToken}`
+    const csrf = await identity.refreshCsrfToken(pair.refreshToken)
+    let received: Record<string, unknown> | undefined
+    const response = await handle(
+      new Request('http://localhost/identity/web/sign-up', {
+        method: 'POST',
+        headers: {
+          cookie,
+          origin,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: JSON.stringify(credentials),
+      }),
+      {
+        identity,
+        identityWebOrigins: [origin],
+        registration: {
+          signUp: async (input) => {
+            received = input
+            return { status: 'accepted' as const }
+          },
+        },
+      },
+    )
+
+    expect(response.status).toBe(202)
+    expect(response.headers.get('set-cookie')).toBeNull()
+    expect(received).toMatchObject({
+      mode: 'upgrade',
+      guest: { userId: 'guest-signup', familyId: pair.familyId },
+    })
+  })
+
+  test('rejects ambiguous transport and client-controlled identity before registration', async () => {
+    const { identity, pair } = await identityFixture()
+    let calls = 0
+    const registration = {
+      signUp: async () => {
+        calls += 1
+        return { status: 'accepted' as const }
+      },
+    }
+    const attempts = [
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify(credentials),
+      }),
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: {
+          cookie: `__Host-r2r-refresh=${pair.refreshToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      }),
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${pair.accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ ...credentials, ownerId: 'attacker-selected' }),
+      }),
+    ]
+
+    expect((await handle(attempts[0]!, { identity, registration })).status).toBe(403)
+    expect((await handle(attempts[1]!, { identity, registration })).status).toBe(400)
+    expect((await handle(attempts[2]!, { identity, registration })).status).toBe(400)
+    expect(calls).toBe(0)
+  })
+
+  test('fails closed when registration orchestration is unavailable', async () => {
+    const { identity, pair } = await identityFixture()
+    const response = await handle(
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${pair.accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      }),
+      { identity },
+    )
+
+    expect(response.status).toBe(503)
+  })
+})

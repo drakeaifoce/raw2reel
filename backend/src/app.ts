@@ -3,7 +3,7 @@ import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
 import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
-import type { IdentityService, TokenPair } from './identity'
+import type { IdentityService, Principal, TokenPair } from './identity'
 import { createIdentityService } from './identity-mongo'
 
 export type AuthenticatedUser = {
@@ -20,6 +20,23 @@ export type AuthSession = { user: AuthenticatedUser }
 export interface AuthService {
   handler(request: Request): Promise<Response>
   getSession(headers: Headers): Promise<AuthSession | null>
+}
+
+export type RegistrationInput = {
+  email: string
+  password: string
+  name: string
+  mode: 'new' | 'upgrade'
+  operationId?: string
+  guest?: Principal
+}
+
+export interface RegistrationService {
+  /**
+   * Persists the registration operation before performing account or ownership
+   * effects. Completion and recovery are owned by the AVI-340 integration.
+   */
+  signUp(input: RegistrationInput): Promise<{ status: 'accepted' }>
 }
 
 const json = (body: unknown, status = 200) =>
@@ -47,8 +64,16 @@ export type AppDependencies = {
   maxMediaSizeBytes?: number
   identity?: Pick<
     IdentityService,
-    'refresh' | 'refreshCsrfToken' | 'matchesRefreshCsrf' | 'recordActivity' | 'revokeAll'
+    | 'authenticateAccess'
+    | 'refresh'
+    | 'refreshCsrfToken'
+    | 'matchesRefreshCsrf'
+    | 'recordActivity'
+    | 'revokeAll'
+    | 'claimUpgradeWithAccess'
+    | 'claimUpgradeWithRefresh'
   >
+  registration?: RegistrationService
   identityWebOrigins?: string[]
 }
 
@@ -113,6 +138,52 @@ const isAllowedType = (type: string, allowed: string[]) =>
     pattern.endsWith('/*') ? type.startsWith(pattern.slice(0, -1)) : type === pattern,
   )
 
+type SignUpBody = { email: string; password: string; name: string; mode: 'new' | 'upgrade' }
+
+const readSignUpBody = async (request: Request): Promise<SignUpBody | undefined> => {
+  if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') return
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return
+  }
+  if (typeof body !== 'object' || body === null) return
+  const value = body as Record<string, unknown>
+  const keys = Object.keys(value).sort()
+  if (keys.join(',') !== 'email,mode,name,password') return
+  if (
+    typeof value.email !== 'string' ||
+    typeof value.password !== 'string' ||
+    typeof value.name !== 'string' ||
+    (value.mode !== 'new' && value.mode !== 'upgrade') ||
+    value.email.length === 0 ||
+    value.password.length === 0 ||
+    value.name.length === 0
+  ) {
+    return
+  }
+  return value as SignUpBody
+}
+
+const acceptRegistration = async (
+  registration: RegistrationService,
+  body: SignUpBody,
+  guest?: { operationId: string; principal: Principal },
+) => {
+  await registration.signUp({
+    ...body,
+    ...(guest ? { operationId: guest.operationId, guest: guest.principal } : {}),
+  })
+  return json(
+    {
+      status: 'accepted',
+      ...(guest ? { operationId: guest.operationId } : {}),
+    },
+    202,
+  )
+}
+
 export async function requireSession(
   request: Request,
   auth: AuthService | undefined,
@@ -139,6 +210,71 @@ export async function handle(
 
   if (pathname.startsWith('/identity/') && !dependencies.identity) {
     return error('identity service is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+  }
+
+  if (
+    (pathname === '/identity/api/sign-up' || pathname === '/identity/web/sign-up') &&
+    request.method === 'POST'
+  ) {
+    const isWeb = pathname === '/identity/web/sign-up'
+    if (isWeb) {
+      if (!allowedWebOrigin(request, dependencies.identityWebOrigins)) {
+        return identityError('ORIGIN_REJECTED', 403)
+      }
+      if (request.headers.has('authorization')) return identityError('INVALID_REQUEST', 400)
+    } else {
+      const rejected = rejectApiBrowserTransport(request)
+      if (rejected) return rejected
+    }
+
+    const body = await readSignUpBody(request)
+    if (!body) return identityError('INVALID_REQUEST', 400)
+    if (!dependencies.registration) {
+      return error('registration service is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+
+    if (body.mode === 'new') {
+      const credential = isWeb ? readRefreshCookie(request) : bearerToken(request)
+      if (credential) {
+        const valid = isWeb
+          ? Boolean(await dependencies.identity!.refreshCsrfToken(credential))
+          : Boolean(await dependencies.identity!.authenticateAccess(credential))
+        return identityError(valid ? 'ACCOUNT_TRANSITION' : 'INVALID_CREDENTIAL', valid ? 409 : 401)
+      }
+      return acceptRegistration(dependencies.registration, body)
+    }
+
+    if (isWeb) {
+      const refreshToken = readRefreshCookie(request)
+      const csrfToken = request.headers.get('x-csrf-token')
+      if (!refreshToken || !csrfToken) return identityError('CSRF_REJECTED', 403)
+      if (!(await dependencies.identity!.matchesRefreshCsrf(refreshToken, csrfToken))) {
+        return identityError('CSRF_REJECTED', 403)
+      }
+      const claim = await dependencies.identity!.claimUpgradeWithRefresh(refreshToken)
+      if (claim.status !== 'claimed') {
+        return claim.status === 'invalid'
+          ? identityError('INVALID_CREDENTIAL', 401)
+          : identityError('ACCOUNT_TRANSITION', 409)
+      }
+      return acceptRegistration(dependencies.registration, body, {
+        operationId: claim.operationId,
+        principal: claim.principal,
+      })
+    }
+
+    const accessToken = bearerToken(request)
+    if (!accessToken) return identityError('INVALID_CREDENTIAL', 401)
+    const claim = await dependencies.identity!.claimUpgradeWithAccess(accessToken)
+    if (claim.status !== 'claimed') {
+      return claim.status === 'invalid'
+        ? identityError('INVALID_CREDENTIAL', 401)
+        : identityError('ACCOUNT_TRANSITION', 409)
+    }
+    return acceptRegistration(dependencies.registration, body, {
+      operationId: claim.operationId,
+      principal: claim.principal,
+    })
   }
 
   if (pathname === '/identity/api/refresh' && request.method === 'POST') {
