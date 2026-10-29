@@ -1,6 +1,6 @@
 import { mongodbAdapter } from '@better-auth/mongo-adapter'
 import { betterAuth } from 'better-auth/minimal'
-import { anonymous } from 'better-auth/plugins'
+import { anonymous, openAPI } from 'better-auth/plugins'
 import type { BetterAuthOptions } from 'better-auth'
 import { MongoClient } from 'mongodb'
 import type { AuthService } from './app'
@@ -30,6 +30,8 @@ type AuthServiceOptions = {
   baseUrl: string
   secret: string
   trustedOrigins?: string[]
+  /** Enable the schema generator only in offline documentation tooling. */
+  documentation?: boolean
 }
 
 export function createAuthServiceWithDatabase(
@@ -61,7 +63,8 @@ export function createAuthServiceWithDatabase(
           throw new Error('implicit anonymous account linking is disabled')
         },
       }),
-    ],
+      ...(options.documentation ? [openAPI({ disableDefaultReference: true })] : []),
+    ] as const,
     advanced: {
       // Keep origin validation enabled in test environments as well, so the
       // integration suite exercises the same CSRF boundary as production.

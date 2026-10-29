@@ -1,0 +1,435 @@
+{
+  "schemas": {
+    "User": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "readOnly": true
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "emailVerified": {
+          "type": "boolean",
+          "default": false,
+          "readOnly": true
+        },
+        "image": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "isAnonymous": {
+          "type": "boolean",
+          "default": false,
+          "readOnly": true
+        },
+        "registrationOperationId": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "name", "email", "emailVerified", "createdAt", "updatedAt"]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "readOnly": true
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "token": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ipAddress": {
+          "type": "string"
+        },
+        "userAgent": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "expiresAt", "token", "createdAt", "updatedAt", "userId"]
+    },
+    "Account": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "readOnly": true
+        },
+        "accountId": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "accessToken": {
+          "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
+        },
+        "idToken": {
+          "type": "string"
+        },
+        "accessTokenExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "refreshTokenExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "accountId", "providerId", "userId", "createdAt", "updatedAt"]
+    },
+    "Verification": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "readOnly": true
+        },
+        "identifier": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "identifier", "value", "expiresAt", "createdAt", "updatedAt"]
+    },
+    "RateLimit": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "readOnly": true
+        },
+        "key": {
+          "type": "string"
+        },
+        "count": {
+          "type": "number"
+        },
+        "lastRequest": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "key", "count", "lastRequest"]
+    }
+  },
+  "session": {
+    "get": {
+      "tags": ["Default"],
+      "description": "Get the current session",
+      "operationId": "getSession",
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ],
+      "parameters": [],
+      "responses": {
+        "200": {
+          "description": "Success",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": ["object", "null"],
+                "properties": {
+                  "session": {
+                    "$ref": "#/components/schemas/Session"
+                  },
+                  "user": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                },
+                "required": ["session", "user"]
+              }
+            }
+          }
+        },
+        "400": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          },
+          "description": "Bad Request. Usually due to missing parameters, or invalid parameters."
+        },
+        "401": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          },
+          "description": "Unauthorized. Due to missing or invalid authentication."
+        },
+        "403": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Forbidden. You do not have permission to access this resource or to perform this action."
+        },
+        "404": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Not Found. The requested resource was not found."
+        },
+        "429": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Too Many Requests. You have exceeded the rate limit. Try again later."
+        },
+        "500": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Internal Server Error. This is a problem with the server that you cannot fix."
+        }
+      }
+    },
+    "post": {
+      "tags": ["Default"],
+      "description": "Get the current session",
+      "operationId": "getSessionPost",
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ],
+      "parameters": [],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Success",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": ["object", "null"],
+                "properties": {
+                  "session": {
+                    "$ref": "#/components/schemas/Session"
+                  },
+                  "user": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                },
+                "required": ["session", "user"]
+              }
+            }
+          }
+        },
+        "400": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          },
+          "description": "Bad Request. Usually due to missing parameters, or invalid parameters."
+        },
+        "401": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          },
+          "description": "Unauthorized. Due to missing or invalid authentication."
+        },
+        "403": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Forbidden. You do not have permission to access this resource or to perform this action."
+        },
+        "404": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Not Found. The requested resource was not found."
+        },
+        "429": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Too Many Requests. You have exceeded the rate limit. Try again later."
+        },
+        "500": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Internal Server Error. This is a problem with the server that you cannot fix."
+        }
+      }
+    }
+  }
+}
