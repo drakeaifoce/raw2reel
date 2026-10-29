@@ -10,6 +10,7 @@ export function SignInForm() {
   const navigate = useNavigate()
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in')
   const [pending, setPending] = useState(false)
+  const [guestPending, setGuestPending] = useState(false)
   const [error, setError] = useState('')
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -38,6 +39,22 @@ export function SignInForm() {
       setPending(false)
     }
     setError('Unable to authenticate. Check your details and try again.')
+  }
+
+  async function continueAsGuest() {
+    setGuestPending(true)
+    setError('')
+    try {
+      const result = await authClient.signIn.anonymous()
+      if (!result.error) {
+        void navigate(routes.studio, { replace: true })
+        return
+      }
+    } catch {
+      // Keep dependency and transport details out of user-visible errors.
+    }
+    setError('Unable to start a guest session. Try again.')
+    setGuestPending(false)
   }
 
   return (
@@ -79,6 +96,19 @@ export function SignInForm() {
           {pending ? 'Please wait…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
       </form>
+      <div className={styles.guestSection}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pending || guestPending}
+          onClick={() => void continueAsGuest()}
+        >
+          {guestPending ? 'Starting guest session…' : 'Continue as guest'}
+        </Button>
+        <p className={styles.guestNote}>
+          Guest work can be lost if you clear this browser session. Register to keep access.
+        </p>
+      </div>
 
       <p className={styles.note}>
         {mode === 'sign-in' ? 'New to Raw2Reel?' : 'Already have an account?'}{' '}

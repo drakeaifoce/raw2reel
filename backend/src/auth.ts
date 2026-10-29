@@ -1,5 +1,6 @@
 import { mongodbAdapter } from '@better-auth/mongo-adapter'
 import { betterAuth } from 'better-auth/minimal'
+import { anonymous } from 'better-auth/plugins'
 import type { BetterAuthOptions } from 'better-auth'
 import { MongoClient } from 'mongodb'
 import type { AuthService } from './app'
@@ -44,6 +45,18 @@ export function createAuthServiceWithDatabase(
     basePath: '/api/auth',
     trustedOrigins: [baseUrl.origin, ...(options.trustedOrigins ?? [])],
     emailAndPassword: { enabled: true },
+    plugins: [
+      anonymous({
+        // Guest lifecycle is owned by the explicit, fenced cleanup process.
+        // Linking or logging out must never delete an identity implicitly.
+        disableDeleteAnonymousUser: true,
+        onLinkAccount: async () => {
+          // Ownership transfer is deliberately handled by the guarded upgrade
+          // operation. Better Auth's implicit link callback has no owner fence.
+          throw new Error('implicit anonymous account linking is disabled')
+        },
+      }),
+    ],
     advanced: {
       // Keep origin validation enabled in test environments as well, so the
       // integration suite exercises the same CSRF boundary as production.
@@ -61,6 +74,7 @@ export function createAuthServiceWithDatabase(
       customRules: {
         '/sign-in/email': { window: 15 * 60, max: 10 },
         '/sign-up/email': { window: 15 * 60, max: 10 },
+        '/sign-in/anonymous': { window: 15 * 60, max: 5 },
       },
     },
   })

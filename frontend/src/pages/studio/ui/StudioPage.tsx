@@ -17,7 +17,7 @@ export function StudioPage() {
           <>
             <Chip className={styles.guest}>
               <UserIcon size={14} />
-              {session?.user.email ?? 'Account'}
+              {session?.user.isAnonymous ? 'Guest session' : (session?.user.email ?? 'Account')}
             </Chip>
             <SignOutLink />
           </>

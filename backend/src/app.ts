@@ -10,6 +10,7 @@ export type AuthenticatedUser = {
   // server-issued id is the only property required by authorization guards.
   email?: string
   name?: string
+  isAnonymous?: boolean | null
 }
 
 export type AuthSession = { user: AuthenticatedUser }

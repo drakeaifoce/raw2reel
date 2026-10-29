@@ -22,6 +22,46 @@ const sessionCookie = (response: Response) => {
 }
 
 describe('Better Auth lifecycle', () => {
+  test('creates isolated anonymous identities and does not expose destructive deletion', async () => {
+    const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
+    const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
+
+    const first = await auth.handler(request('/sign-in/anonymous', { method: 'POST', body: '{}' }))
+    const second = await auth.handler(request('/sign-in/anonymous', { method: 'POST', body: '{}' }))
+    expect(first.status).toBe(200)
+    expect(second.status).toBe(200)
+
+    const firstCookie = sessionCookie(first)
+    const secondCookie = sessionCookie(second)
+    const firstSession = await auth.getSession(new Headers({ cookie: firstCookie }))
+    const secondSession = await auth.getSession(new Headers({ cookie: secondCookie }))
+    expect(firstSession?.user).toMatchObject({ isAnonymous: true })
+    expect(secondSession?.user).toMatchObject({ isAnonymous: true })
+    expect(firstSession?.user.id).not.toBe(secondSession?.user.id)
+
+    const repeated = await auth.handler(
+      request('/sign-in/anonymous', {
+        method: 'POST',
+        body: '{}',
+        headers: { cookie: firstCookie },
+      }),
+    )
+    expect(repeated.status).toBeGreaterThanOrEqual(400)
+    expect((await auth.getSession(new Headers({ cookie: firstCookie })))?.user.id).toBe(
+      firstSession?.user.id,
+    )
+
+    const deletion = await auth.handler(
+      request('/delete-anonymous-user', {
+        method: 'POST',
+        body: '{}',
+        headers: { cookie: firstCookie },
+      }),
+    )
+    expect(deletion.status).toBe(404)
+    expect(await auth.getSession(new Headers({ cookie: firstCookie }))).not.toBeNull()
+  })
+
   test('signup, session restore, logout, invalid credentials and origin protection', async () => {
     const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
     const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
