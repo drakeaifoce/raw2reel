@@ -656,6 +656,91 @@ describe('/identity sign-up transport', () => {
     expect(attempts).toBe(2)
   })
 
+  test('recovers the exact web upgrade after its guest identity was invalidated', async () => {
+    const { identity, pair } = await identityFixture()
+    const cookie = `__Host-r2r-refresh=${pair.refreshToken}`
+    const csrf = await identity.refreshCsrfToken(pair.refreshToken)
+    let operationId: string | undefined
+    let attempts = 0
+    const registration = {
+      signUp: async (
+        input: Parameters<NonNullable<AppDependencies['registration']>['signUp']>[0],
+      ) => {
+        attempts += 1
+        operationId ??= input.operationId
+        expect(input.operationId).toBe(operationId)
+        expect(input.guest?.userId).toBe('guest-signup')
+        if (attempts === 1) {
+          expect(await identity.completeUpgrade(input.guest!.userId, input.operationId!)).toBe(true)
+          throw new Error('final operation write failed')
+        }
+        return completedRegistration()
+      },
+    }
+    const request = () =>
+      new Request('http://localhost/identity/web/sign-up', {
+        method: 'POST',
+        headers: {
+          cookie,
+          origin,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: JSON.stringify(credentials),
+      })
+
+    await expect(
+      handle(request(), { identity, identityWebOrigins: [origin], registration }),
+    ).rejects.toThrow('final operation write failed')
+    expect(await identity.authenticateAccess(pair.accessToken)).toBeNull()
+
+    const recovered = await handle(request(), {
+      identity,
+      identityWebOrigins: [origin],
+      registration,
+    })
+    expect(recovered.status).toBe(200)
+    expect(recovered.headers.getSetCookie()).toHaveLength(2)
+    expect(attempts).toBe(2)
+  })
+
+  test('recovers the exact API upgrade without restoring guest media authority', async () => {
+    const { identity, pair } = await identityFixture()
+    let operationId: string | undefined
+    let attempts = 0
+    const registration = {
+      signUp: async (
+        input: Parameters<NonNullable<AppDependencies['registration']>['signUp']>[0],
+      ) => {
+        attempts += 1
+        operationId ??= input.operationId
+        expect(input.operationId).toBe(operationId)
+        if (attempts === 1) {
+          expect(await identity.completeUpgrade(input.guest!.userId, input.operationId!)).toBe(true)
+          throw new Error('lost completed response')
+        }
+        return completedRegistration()
+      },
+    }
+    const request = () =>
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${pair.accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      })
+
+    await expect(handle(request(), { identity, registration })).rejects.toThrow(
+      'lost completed response',
+    )
+    expect(await identity.authenticateAccess(pair.accessToken)).toBeNull()
+    expect((await handle(request(), { identity, registration })).status).toBe(200)
+    expect(await identity.authenticateAccess(pair.accessToken)).toBeNull()
+    expect(attempts).toBe(2)
+  })
+
   test('rejects ambiguous transport and client-controlled identity before registration', async () => {
     const { identity, pair } = await identityFixture()
     let calls = 0

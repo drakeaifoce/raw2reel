@@ -103,6 +103,8 @@ export type AppDependencies = {
     | 'revokeRefresh'
     | 'claimUpgradeWithAccess'
     | 'claimUpgradeWithRefresh'
+    | 'recoverCompletedUpgradeWithAccess'
+    | 'recoverCompletedUpgradeWithRefresh'
     | 'authenticateSession'
     | 'revokeSession'
     | 'completeUpgrade'
@@ -502,7 +504,10 @@ export async function handle(
       if (!(await dependencies.identity!.matchesRefreshCsrf(refreshToken, csrfToken))) {
         return identityError('CSRF_REJECTED', 403)
       }
-      const claim = await dependencies.identity!.claimUpgradeWithRefresh(refreshToken)
+      let claim = await dependencies.identity!.claimUpgradeWithRefresh(refreshToken)
+      if (claim.status === 'invalid') {
+        claim = await dependencies.identity!.recoverCompletedUpgradeWithRefresh(refreshToken)
+      }
       if (claim.status !== 'claimed') {
         return claim.status === 'invalid'
           ? identityError('INVALID_CREDENTIAL', 401)
@@ -518,7 +523,10 @@ export async function handle(
 
     const accessToken = bearerToken(request)
     if (!accessToken) return identityError('INVALID_CREDENTIAL', 401)
-    const claim = await dependencies.identity!.claimUpgradeWithAccess(accessToken)
+    let claim = await dependencies.identity!.claimUpgradeWithAccess(accessToken)
+    if (claim.status === 'invalid') {
+      claim = await dependencies.identity!.recoverCompletedUpgradeWithAccess(accessToken)
+    }
     if (claim.status !== 'claimed') {
       return claim.status === 'invalid'
         ? identityError('INVALID_CREDENTIAL', 401)

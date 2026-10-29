@@ -6,6 +6,7 @@ import { RegistrationOrchestrator, type RegistrationOperationRepository } from '
 
 class MemoryOperations implements RegistrationOperationRepository {
   operation: Parameters<RegistrationOperationRepository['start']>[0] | undefined
+  failFinalWriteOnce = false
   async start(operation: Parameters<RegistrationOperationRepository['start']>[0]) {
     this.operation ??= operation
     return this.operation
@@ -15,6 +16,10 @@ class MemoryOperations implements RegistrationOperationRepository {
     expected: Parameters<RegistrationOperationRepository['advance']>[1],
     update: Parameters<RegistrationOperationRepository['advance']>[2],
   ) {
+    if (expected === 'completion-recorded' && this.failFinalWriteOnce) {
+      this.failFinalWriteOnce = false
+      throw new Error('final operation write failed')
+    }
     if (!this.operation || this.operation._id !== operationId || this.operation.state !== expected)
       return null
     this.operation = { ...this.operation, ...update }
@@ -149,6 +154,103 @@ describe('guest registration ownership flow', () => {
           media,
         })
       ).status,
+    ).toBe(404)
+  })
+
+  test('recovers final-write failure and a lost response through web transport', async () => {
+    const identity = new IdentityService(new MemoryIdentityStore())
+    const guestPair = await identity.registerGuest('guest-recovery', 'guest-session')
+    const operations = new MemoryOperations()
+    operations.failFinalWriteOnce = true
+    const records: MediaMetadata[] = [
+      {
+        id: 'recovery-upload',
+        ownerId: 'guest-recovery',
+        name: 'clip.mp4',
+        type: 'video/mp4',
+        size: 11,
+        blobKey: 'guest-recovery/recovery-upload',
+        createdAt: new Date().toISOString(),
+      },
+    ]
+    const media: MediaRepository = {
+      create: async () => ({}) as never,
+      list: async (_limit, ownerId) => records.filter((record) => record.ownerId === ownerId),
+      get: async (id, ownerId) => {
+        const record = records.find((item) => item.id === id && item.ownerId === ownerId)
+        return record ? { metadata: record, body: new Blob(['guest-video']).stream() } : null
+      },
+      transferOwner: async (from, to) => {
+        for (const record of records) if (record.ownerId === from) record.ownerId = to
+        return 1
+      },
+    }
+    let currentUser = { id: 'registered-recovery', sessionToken: 'registered-session' }
+    const registeredSession = {
+      user: { id: 'registered-recovery', isAnonymous: false as const },
+      sessionToken: 'registered-session',
+      sessionCookie: 'better-auth.session_token=registered; HttpOnly; Path=/',
+    }
+    const auth: AuthService = {
+      handler: async () => new Response('unused'),
+      getSession: async () => ({
+        user: { id: currentUser.id, isAnonymous: false },
+        sessionToken: currentUser.sessionToken,
+      }),
+      signUpEmail: async () => registeredSession,
+      signInEmail: async () => registeredSession,
+    }
+    const registration = new RegistrationOrchestrator(operations, auth, identity, media)
+    const origin = 'https://raw2reel.studio'
+    const cookie = `__Host-r2r-refresh=${guestPair.refreshToken}`
+    const csrf = await identity.refreshCsrfToken(guestPair.refreshToken)
+    const request = () =>
+      new Request('http://localhost/identity/web/sign-up', {
+        method: 'POST',
+        headers: {
+          origin,
+          cookie,
+          'content-type': 'application/json',
+          'x-csrf-token': csrf!,
+        },
+        body: JSON.stringify({
+          email: 'recovery@example.com',
+          password: 'Password1!',
+          name: 'Recovery Editor',
+          mode: 'upgrade',
+        }),
+      })
+    const dependencies = {
+      auth,
+      identity,
+      media,
+      registration,
+      identityWebOrigins: [origin],
+    }
+
+    await expect(handle(request(), dependencies)).rejects.toThrow('final operation write failed')
+    expect(operations.operation?.state).toBe('completion-recorded')
+    expect(await identity.authenticateAccess(guestPair.accessToken)).toBeNull()
+
+    const recovered = await handle(request(), dependencies)
+    expect(recovered.status).toBe(200)
+    expect(recovered.headers.getSetCookie()).toHaveLength(2)
+    expect(operations.operation?.state).toBe('completed')
+    expect(await recovered.json()).toMatchObject({
+      accessToken: expect.any(String),
+      user: { id: 'registered-recovery', isAnonymous: false },
+    })
+
+    // A completed request whose response was lost is recoverable with the same
+    // operation proof and returns a fresh registered handoff.
+    const lostResponseRetry = await handle(request(), dependencies)
+    expect(lostResponseRetry.status).toBe(200)
+    expect(operations.operation?.state).toBe('completed')
+
+    await identity.registerRegistered('registered-foreign', 'foreign-session')
+    currentUser = { id: 'registered-foreign', sessionToken: 'foreign-session' }
+    expect(
+      (await handle(new Request('http://localhost/media/recovery-upload'), dependencies)).status,
     ).toBe(404)
   })
 })

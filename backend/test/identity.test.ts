@@ -129,4 +129,43 @@ describe('guest identity credentials', () => {
       status: 'transition',
     })
   })
+
+  test('limits completed-upgrade recovery to the exact live credential family', async () => {
+    const { service, advance } = fixture()
+    const pair = await service.registerGuest('guest-completed-upgrade')
+    const claim = await service.claimUpgradeWithRefresh(pair.refreshToken)
+    expect(claim.status).toBe('claimed')
+    if (claim.status !== 'claimed') throw new Error('upgrade was not claimed')
+    expect(await service.completeUpgrade('guest-completed-upgrade', claim.operationId)).toBe(true)
+
+    expect(await service.recoverCompletedUpgradeWithRefresh(pair.refreshToken)).toEqual(claim)
+    expect(await service.recoverCompletedUpgradeWithAccess(pair.accessToken)).toEqual(claim)
+    expect(await service.recoverCompletedUpgradeWithRefresh('forged')).toEqual({
+      status: 'invalid',
+    })
+
+    advance(30 * 24 * hour)
+    expect(await service.recoverCompletedUpgradeWithRefresh(pair.refreshToken)).toEqual({
+      status: 'invalid',
+    })
+    expect(await service.recoverCompletedUpgradeWithAccess(pair.accessToken)).toEqual({
+      status: 'invalid',
+    })
+  })
+
+  test('rejects completed-upgrade recovery after refresh reuse revokes the family', async () => {
+    const { service } = fixture()
+    const original = await service.registerGuest('guest-reused-upgrade')
+    const current = await service.refresh(original.refreshToken)
+    expect(current).not.toBeNull()
+    const claim = await service.claimUpgradeWithRefresh(current!.refreshToken)
+    expect(claim.status).toBe('claimed')
+    if (claim.status !== 'claimed') throw new Error('upgrade was not claimed')
+    expect(await service.completeUpgrade('guest-reused-upgrade', claim.operationId)).toBe(true)
+
+    expect(await service.refresh(original.refreshToken)).toBeNull()
+    expect(await service.recoverCompletedUpgradeWithRefresh(current!.refreshToken)).toEqual({
+      status: 'invalid',
+    })
+  })
 })

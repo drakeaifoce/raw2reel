@@ -405,6 +405,26 @@ export class IdentityService {
     return this.claimUpgrade(found.owner, found.family)
   }
 
+  async recoverCompletedUpgradeWithAccess(accessToken: string): Promise<UpgradeClaim> {
+    const now = this.now().getTime()
+    const found = await this.store.findAccess(await hashCredential(accessToken), now)
+    return found
+      ? this.completedUpgradeRecovery(found.owner, found.family, now)
+      : { status: 'invalid' }
+  }
+
+  async recoverCompletedUpgradeWithRefresh(refreshToken: string): Promise<UpgradeClaim> {
+    const hash = await hashCredential(refreshToken)
+    const now = this.now().getTime()
+    const found = await this.store.findRefresh(hash)
+    if (!found) return { status: 'invalid' }
+    if (found.reused) {
+      await this.store.revokeReuse(found.family.familyId, hash, now)
+      return { status: 'invalid' }
+    }
+    return this.completedUpgradeRecovery(found.owner, found.family, now)
+  }
+
   async isCleanupCandidate(userId: string): Promise<boolean> {
     const owner = await this.store.findOwner(userId)
     return Boolean(
@@ -472,6 +492,28 @@ export class IdentityService {
         operationId: owner.upgradeOperationId,
         principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
       }
+    }
+  }
+
+  private completedUpgradeRecovery(
+    owner: IdentityOwner,
+    family: IdentityFamily,
+    now: number,
+  ): UpgradeClaim {
+    if (
+      owner.kind !== 'guest' ||
+      owner.state !== 'deleted' ||
+      !owner.upgradeOperationId ||
+      owner.credentialEpoch !== family.credentialEpoch + 1 ||
+      family.revokedAt !== undefined ||
+      family.absoluteExpiresAt <= now
+    ) {
+      return { status: 'invalid' }
+    }
+    return {
+      status: 'claimed',
+      operationId: owner.upgradeOperationId,
+      principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
     }
   }
 
