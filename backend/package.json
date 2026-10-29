@@ -9,7 +9,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:docs:browser": "bun scripts/docs-browser.ts"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.28.0",
@@ -23,6 +24,7 @@
     "@better-auth/memory-adapter": "1.7.14",
     "@types/bun": "^1.3.2",
     "@types/swagger-ui-dist": "^3.30.6",
+    "playwright": "1.63.0",
     "prettier": "^3.9.10",
     "typescript": "~5.9.3"
   }

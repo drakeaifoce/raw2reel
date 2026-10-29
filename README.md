@@ -131,3 +131,13 @@ background refresh do not automatically update `lastActiveAt`. Do not interpret
 this documented future policy as automatic deletion or deployment authorization.
 Unhandled dependency/registration exceptions still have no stable JSON error
 contract; documented 503 responses describe explicit unavailable-service checks.
+
+### Swagger browser acceptance
+
+From `backend`, run `bunx playwright install --with-deps chromium --only-shell`
+once, then `bun run test:docs:browser`. The backend CI runs the same check.
+It starts an isolated local backend with no database/auth/storage connections and
+checks `/docs`, `/docs/`, `/api/docs`, and `/api/docs/` in fresh Chromium contexts.
+Each route must render all documented operations, load the correct JSON and local
+assets, and produce no console warnings/errors, failed requests or HTTP errors.
+Set `DOCS_SCREENSHOT=/tmp/swagger.png` to save a screenshot of `/api/docs`.
