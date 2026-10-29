@@ -1,20 +1,43 @@
-import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router'
 import { routes } from '@/shared/config'
-import { Button, buttonVariants } from '@/shared/ui/button'
-import { Divider } from '@/shared/ui/divider'
-import { ArrowRightIcon } from '@/shared/ui/icon'
+import { authClient } from '@/shared/api'
+import { Button } from '@/shared/ui/button'
 import { TextField } from '@/shared/ui/text-field'
 import styles from './SignInForm.module.css'
 
-/** Guest entry plus a mock email sign-in — both lead straight to the studio. */
 export function SignInForm() {
   const navigate = useNavigate()
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    // Auth is mocked for the hackathon: any credentials open the studio.
-    void navigate(routes.studio)
+    setPending(true)
+    setError('')
+    const form = new FormData(event.currentTarget)
+    const email = String(form.get('email') ?? '')
+    const password = String(form.get('password') ?? '')
+    try {
+      const result =
+        mode === 'sign-in'
+          ? await authClient.signIn.email({ email, password })
+          : await authClient.signUp.email({
+              email,
+              password,
+              name: String(form.get('name') ?? ''),
+            })
+      if (!result.error) {
+        void navigate(routes.studio, { replace: true })
+        return
+      }
+    } catch {
+      // Network and server failures intentionally share the generic message below.
+    } finally {
+      setPending(false)
+    }
+    setError('Unable to authenticate. Check your details and try again.')
   }
 
   return (
@@ -23,31 +46,52 @@ export function SignInForm() {
         <h2 id="sign-in-title" className={styles.title}>
           Start editing
         </h2>
-        <p className={styles.subtitle}>No account needed for the demo.</p>
+        <p className={styles.subtitle}>
+          {mode === 'sign-in' ? 'Sign in to continue.' : 'Create an account to start editing.'}
+        </p>
       </div>
 
-      <Link to={routes.studio} className={buttonVariants({ variant: 'primary', size: 'xl' })}>
-        Continue as guest
-        <ArrowRightIcon size={18} />
-      </Link>
-
-      <Divider>or sign in</Divider>
-
       <form className={styles.form} onSubmit={handleSubmit}>
-        <TextField label="Email" type="email" placeholder="you@studio.com" autoComplete="email" />
+        {mode === 'sign-up' && <TextField label="Name" name="name" required autoComplete="name" />}
+        <TextField
+          label="Email"
+          name="email"
+          type="email"
+          required
+          placeholder="you@studio.com"
+          autoComplete="email"
+        />
         <TextField
           label="Password"
+          name="password"
           type="password"
+          required
+          minLength={8}
           placeholder="••••••••"
-          autoComplete="current-password"
+          autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
         />
-        <Button type="submit" size="md">
-          Sign in
+        {error && (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        )}
+        <Button type="submit" size="md" disabled={pending}>
+          {pending ? 'Please wait…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
       </form>
 
       <p className={styles.note}>
-        Sign-in is a mockup for the hackathon. Guest mode has every feature.
+        {mode === 'sign-in' ? 'New to Raw2Reel?' : 'Already have an account?'}{' '}
+        <button
+          className={styles.modeButton}
+          type="button"
+          onClick={() => {
+            setError('')
+            setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')
+          }}
+        >
+          {mode === 'sign-in' ? 'Create account' : 'Sign in'}
+        </button>
       </p>
     </section>
   )

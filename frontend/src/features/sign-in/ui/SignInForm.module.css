@@ -40,6 +40,22 @@
   color: var(--color-text-muted);
 }
 
+.error {
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.modeButton {
+  padding: 0;
+  color: var(--color-text);
+  font: inherit;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
 @media (max-width: 480px) {
   .card {
     padding: 24px;

@@ -5,8 +5,10 @@ import { AppHeader } from '@/widgets/app-header'
 import { EditSetup } from '@/widgets/edit-setup'
 import { ReelOutput } from '@/widgets/reel-output'
 import styles from './StudioPage.module.css'
+import { authClient } from '@/shared/api'
 
 export function StudioPage() {
+  const { data: session } = authClient.useSession()
   return (
     <div className={styles.page}>
       <AppHeader
@@ -15,7 +17,7 @@ export function StudioPage() {
           <>
             <Chip className={styles.guest}>
               <UserIcon size={14} />
-              Guest
+              {session?.user.email ?? 'Account'}
             </Chip>
             <SignOutLink />
           </>
