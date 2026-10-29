@@ -165,6 +165,24 @@ cd ~/work/raw2reel && git fetch gitea main && git checkout -B main FETCH_HEAD
 у машины — тогда секретов в окружении не нужно вовсе, — но назначение
 RBAC-ролей требует прав, которых у роли Contributor нет.
 
+## Токены регистрации runner
+
+Постоянного токена регистрации не хранится намеренно: он позволяет
+зарегистрировать чужой runner, а тот получает docker-сокет хоста, то есть
+фактически root. Токен выпускается на одну операцию и отзывается после.
+
+Выпустить:
+
+```bash
+curl -X POST -H "Authorization: token $(cat /opt/raw2reel/secrets/gitea-token)" \
+  http://127.0.0.1:3000/api/v1/repos/nik/raw2reel/actions/runners/registration-token
+```
+
+Отозвать все выпущенные — `UPDATE action_runner_token SET is_active=0` в
+`/srv/gitea/gitea/gitea.db`; это то же, что кнопка reset в интерфейсе. Уже
+зарегистрированный runner не пострадает, его учётные данные лежат отдельно, в
+`/srv/runner/.runner`.
+
 ## Ограничения, про которые надо знать
 
 Задаче CI смонтирован docker-сокет, то есть фактически права root на хосте.
