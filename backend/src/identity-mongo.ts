@@ -179,6 +179,21 @@ export class MongoIdentityRepository implements IdentityRepository {
     )
   }
 
+  async completeUpgrade(userId: string, operationId: string) {
+    return (
+      (await this.owners.findOneAndUpdate(
+        {
+          _id: userId,
+          kind: 'guest',
+          state: 'upgrading',
+          upgradeOperationId: operationId,
+        },
+        { $set: { state: 'deleted' }, $inc: { credentialEpoch: 1 } },
+        { returnDocument: 'after' },
+      )) !== null
+    )
+  }
+
   async findOwner(userId: string): Promise<IdentityOwner | null> {
     const owner = await this.owners.findOne({ _id: userId })
     return owner ? this.toOwner(owner) : null

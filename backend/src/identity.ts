@@ -55,6 +55,7 @@ export interface IdentityRepository {
   touch(userId: string, now: number): Promise<boolean>
   revokeAll(userId: string, epoch: number, now: number): Promise<boolean>
   claimUpgrade(userId: string, epoch: number, operationId: string): Promise<boolean>
+  completeUpgrade(userId: string, operationId: string): Promise<boolean>
   findOwner(userId: string): Promise<IdentityOwner | null>
   findSession(hash: string): Promise<{ owner: IdentityOwner; family: IdentityFamily } | null>
 }
@@ -148,6 +149,21 @@ export class MemoryIdentityStore implements IdentityRepository {
     }
     owner.state = 'upgrading'
     owner.upgradeOperationId = operationId
+    return true
+  }
+
+  async completeUpgrade(userId: string, operationId: string) {
+    const owner = this.owners.get(userId)
+    if (
+      !owner ||
+      owner.kind !== 'guest' ||
+      owner.state !== 'upgrading' ||
+      owner.upgradeOperationId !== operationId
+    ) {
+      return false
+    }
+    owner.state = 'deleted'
+    owner.credentialEpoch += 1
     return true
   }
 
@@ -358,7 +374,10 @@ export class IdentityService {
     const hash = await hashCredential(accessToken)
     const now = this.now().getTime()
     const found = await this.store.findAccess(hash, now)
-    if (!found || !this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
+    if (!found) return { status: 'invalid' }
+    const resumed = this.resumedUpgrade(found.owner, found.family)
+    if (resumed) return resumed
+    if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
     if (found.owner.kind !== 'guest') return { status: 'transition' }
     return this.claimUpgrade(found.owner, found.family)
   }
@@ -372,6 +391,8 @@ export class IdentityService {
       await this.store.revokeReuse(found.family.familyId, hash, now)
       return { status: 'invalid' }
     }
+    const resumed = this.resumedUpgrade(found.owner, found.family)
+    if (resumed) return resumed
     if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
     if (found.owner.kind !== 'guest') return { status: 'transition' }
     return this.claimUpgrade(found.owner, found.family)
@@ -384,6 +405,10 @@ export class IdentityService {
       owner.state === 'active' &&
       owner.lastActiveAt < this.now().getTime() - 24 * 60 * 60 * 1000,
     )
+  }
+
+  completeUpgrade(userId: string, operationId: string) {
+    return this.store.completeUpgrade(userId, operationId)
   }
 
   private async newFamily(owner: IdentityOwner, now: number, sessionToken: string) {
@@ -419,6 +444,22 @@ export class IdentityService {
       status: 'claimed',
       operationId,
       principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
+    }
+  }
+
+  private resumedUpgrade(owner: IdentityOwner, family: IdentityFamily): UpgradeClaim | undefined {
+    if (
+      owner.kind === 'guest' &&
+      owner.state === 'upgrading' &&
+      owner.upgradeOperationId &&
+      owner.credentialEpoch === family.credentialEpoch &&
+      family.revokedAt === undefined
+    ) {
+      return {
+        status: 'claimed',
+        operationId: owner.upgradeOperationId,
+        principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
+      }
     }
   }
 

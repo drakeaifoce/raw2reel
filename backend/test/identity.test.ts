@@ -105,7 +105,7 @@ describe('guest identity credentials', () => {
     expect(claimed.status === 'claimed' && claimed.operationId).toBeString()
     expect(await service.authenticateAccess(pair.accessToken)).toBeNull()
     expect(await service.refresh(pair.refreshToken)).toBeNull()
-    expect(await service.claimUpgradeWithAccess(pair.accessToken)).toEqual({ status: 'invalid' })
+    expect(await service.claimUpgradeWithAccess(pair.accessToken)).toEqual(claimed)
   })
 
   test('claims refresh continuity without rotating it and rejects registered identities', async () => {

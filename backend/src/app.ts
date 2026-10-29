@@ -5,6 +5,7 @@ import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
 import type { IdentityService, Principal, TokenPair } from './identity'
 import { createIdentityService } from './identity-mongo'
+import { createRegistrationService } from './registration'
 
 export type AuthenticatedUser = {
   id: string
@@ -35,6 +36,11 @@ export interface AuthService {
     headers: Headers,
     input: { email: string; password: string },
   ): Promise<RegisteredAuthSession | null>
+  signUpEmail?(input: {
+    email: string
+    password: string
+    name: string
+  }): Promise<RegisteredAuthSession | null>
   signOut?(headers: Headers): Promise<Response>
 }
 
@@ -93,18 +99,23 @@ export type AppDependencies = {
     | 'claimUpgradeWithRefresh'
     | 'authenticateSession'
     | 'revokeSession'
+    | 'completeUpgrade'
   >
   registration?: RegistrationService
   identityWebOrigins?: string[]
 }
 
+const defaultAuth = createAuthService(config)
+const defaultMedia = createMediaService(config)
+const defaultIdentity = createIdentityService(config)
 const defaultDependencies: AppDependencies = {
-  auth: createAuthService(config),
-  media: createMediaService(config),
+  auth: defaultAuth,
+  media: defaultMedia,
   database: createDatabaseService(config),
   allowedMediaTypes: config.mediaAllowedTypes,
   maxMediaSizeBytes: config.maxMediaSizeBytes,
-  identity: createIdentityService(config),
+  identity: defaultIdentity,
+  registration: createRegistrationService(config, defaultAuth, defaultIdentity, defaultMedia),
   identityWebOrigins: config.betterAuthTrustedOrigins,
 }
 

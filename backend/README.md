@@ -81,6 +81,14 @@ Legacy-записи без `ownerId` никому не видны и автом�
 `operationId`; клиентские owner identifiers в нём не участвуют. Этот перенос не
 удаляет Blob и не меняет данные чужих или ownerless записей.
 
+Регистрация хранит state machine операции в `registrationOperations`, не
+сохраняя пароль. После создания Better Auth account она создаёт registered
+identity, переносит только metadata прежнего guest owner и закрывает guest
+identity. Повтор с тем же guest credential продолжает тот же `operationId`; если
+процесс остановился сразу после создания account, те же credentials сначала
+проверяются через sign-in, поэтому второй account не создаётся. Клиент после
+ответа `202` входит в созданный account обычным sign-in.
+
 Ошибки клиента возвращаются как `{ "error": "...", "code": "..." }` с
 соответствующим статусом 400, 404, 413 или 415. Если MongoDB или Blob не
 настроены, API отвечает 503 с кодом `DEPENDENCY_UNAVAILABLE`.
