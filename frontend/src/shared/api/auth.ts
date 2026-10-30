@@ -53,6 +53,19 @@ const rememberAccess = async (response: Response) => {
   return response
 }
 
+let pendingRefresh: Promise<Response> | undefined
+
+const refreshAccess = async () => {
+  const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
+  if (!csrf.ok) return csrf
+  const { csrfToken } = (await csrf.json()) as { csrfToken: string }
+  return identityRequest('/api/identity/web/refresh', {
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+    body: '{}',
+  }).then(rememberAccess)
+}
+
 export const identityClient = {
   signIn: (credentials: { email: string; password: string }) =>
     identityRequest('/api/identity/web/sign-in', {
@@ -79,15 +92,13 @@ export const identityClient = {
   },
   startGuest: () =>
     identityRequest('/api/identity/web/guest', { method: 'POST', body: '{}' }).then(rememberAccess),
-  async refresh() {
-    const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
-    if (!csrf.ok) return csrf
-    const { csrfToken } = (await csrf.json()) as { csrfToken: string }
-    return identityRequest('/api/identity/web/refresh', {
-      method: 'POST',
-      headers: { 'x-csrf-token': csrfToken },
-      body: '{}',
-    }).then(rememberAccess)
+  refresh() {
+    // Refresh tokens are single-use: a second concurrent call would replay the same cookie and
+    // revoke the whole family, so every caller shares the in-flight request.
+    pendingRefresh ??= refreshAccess().finally(() => {
+      pendingRefresh = undefined
+    })
+    return pendingRefresh
   },
   accessToken: () => accessToken,
   async signOut() {

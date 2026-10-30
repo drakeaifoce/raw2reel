@@ -73,3 +73,26 @@ test('restores the identity access token before opening a guest studio', async (
   expect(await screen.findByText('Private studio')).toBeDefined()
   expect(identity.refresh).toHaveBeenCalledOnce()
 })
+
+test('does not refresh again when the session refetch returns a new object', async () => {
+  session.value = { user: { id: 'guest-1', isAnonymous: true } }
+  identity.accessToken.mockReturnValue(undefined)
+  let finish: (response: { ok: boolean }) => void = () => undefined
+  identity.refresh.mockReturnValue(new Promise((resolve) => (finish = resolve)))
+  const view = (
+    <MemoryRouter initialEntries={['/studio']}>
+      <ProtectedRoute>
+        <p>Private studio</p>
+      </ProtectedRoute>
+    </MemoryRouter>
+  )
+  const { rerender } = render(view)
+
+  // Refresh synchronizes Better Auth, which swaps in an equal but new session object.
+  session.value = { user: { id: 'guest-1', isAnonymous: true } }
+  rerender(view)
+  finish({ ok: true })
+
+  expect(await screen.findByText('Private studio')).toBeDefined()
+  expect(identity.refresh).toHaveBeenCalledOnce()
+})

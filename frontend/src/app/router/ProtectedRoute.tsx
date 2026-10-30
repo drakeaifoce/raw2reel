@@ -7,9 +7,11 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { data: session, isPending } = authClient.useSession()
   const [identityState, setIdentityState] = useState<'pending' | 'ready' | 'invalid'>('pending')
   const hasAccessToken = Boolean(identityClient.accessToken())
+  // Refreshing refetches the session object, so key the effect on identity, not object identity.
+  const userId = session?.user.id
 
   useEffect(() => {
-    if (!session || hasAccessToken) return
+    if (!userId || hasAccessToken) return
     let active = true
     void identityClient.refresh().then((response) => {
       if (active) setIdentityState(response.ok ? 'ready' : 'invalid')
@@ -17,7 +19,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return () => {
       active = false
     }
-  }, [hasAccessToken, session])
+  }, [hasAccessToken, userId])
 
   if (isPending || (session && !hasAccessToken && identityState === 'pending')) {
     return <main aria-busy="true">Checking your session…</main>
