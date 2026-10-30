@@ -1,3 +1,4 @@
+import { formatBytes } from '@/shared/lib'
 import type { Video } from './types'
 
 export const SAMPLE_VIDEOS: Video[] = [
@@ -36,12 +37,15 @@ export const SAMPLE_VIDEOS: Video[] = [
   },
 ]
 
-/** Builds a mock video for a user upload until Muse Vision is wired in. */
-export function createUploadedVideo(fileName: string): Video {
+type UploadedMedia = { id: string; name: string; size: number }
+
+/** Wraps stored media as footage; faces stay mocked until Muse Vision is wired in. */
+export function createUploadedVideo(media: UploadedMedia): Video {
   return {
-    id: `upload-${fileName}`,
-    title: fileName,
-    meta: 'Your upload · scanned by Muse Vision',
+    id: `upload-${media.id}`,
+    mediaId: media.id,
+    title: media.name,
+    meta: `Your upload · ${formatBytes(media.size)}`,
     tone: '#33313B',
     faces: [
       { id: 'a', label: 'Person 1', shots: 'in 27 shots', tone: '#C9B48F' },

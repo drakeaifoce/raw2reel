@@ -1,17 +1,20 @@
 import clsx from 'clsx'
 import { useId, useState, type ChangeEvent, type DragEvent } from 'react'
 import { useProjectStore } from '@/entities/project'
-import { SAMPLE_VIDEOS, VideoRow, createUploadedVideo } from '@/entities/video'
+import { SAMPLE_VIDEOS, VideoRow } from '@/entities/video'
 import { Button } from '@/shared/ui/button'
 import { UploadIcon, VideoIcon } from '@/shared/ui/icon'
 import { visuallyHiddenClassName } from '@/shared/ui/visually-hidden'
+import { useFootageUpload } from '../model/useFootageUpload'
 import { useSelectFootage } from '../model/useSelectFootage'
 import styles from './FootagePicker.module.css'
+import { UploadProgress } from './UploadProgress'
 
-/** Step 1: upload a raw clip or pick one of the bundled samples. */
+/** Step 1: upload a raw clip to media storage or pick one of the bundled samples. */
 export function FootagePicker() {
   const video = useProjectStore((state) => state.video)
   const { selectFootage, clearFootage } = useSelectFootage()
+  const { upload, start, cancel } = useFootageUpload()
   const [samplesOpen, setSamplesOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const samplesId = useId()
@@ -19,7 +22,7 @@ export function FootagePicker() {
   const handleFile = (file: File | undefined) => {
     if (!file) return
     setSamplesOpen(false)
-    selectFootage(createUploadedVideo(file.name))
+    void start(file)
   }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -52,6 +55,12 @@ export function FootagePicker() {
     )
   }
 
+  if (upload.status === 'uploading') {
+    return (
+      <UploadProgress fileName={upload.fileName} progress={upload.progress} onCancel={cancel} />
+    )
+  }
+
   return (
     <>
       {/* Drag handlers only enhance the native file input wrapped by this label. */}
@@ -67,7 +76,7 @@ export function FootagePicker() {
       >
         <UploadIcon size={28} className={styles.uploadIcon} />
         <span className={styles.dropTitle}>Drop one video or browse</span>
-        <span className={styles.dropHint}>MP4 or MOV, one raw clip</span>
+        <span className={styles.dropHint}>MP4 or MOV, one raw clip up to 100 MB</span>
         <input
           className={visuallyHiddenClassName}
           type="file"
@@ -75,6 +84,12 @@ export function FootagePicker() {
           onChange={handleInputChange}
         />
       </label>
+
+      {upload.status === 'failed' && (
+        <p role="alert" className={styles.error}>
+          {upload.message}
+        </p>
+      )}
 
       <Button
         fullWidth

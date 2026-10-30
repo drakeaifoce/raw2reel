@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useProjectStore } from '@/entities/project'
 import { listMedia, type MediaItem } from '@/shared/api'
 import styles from './MediaList.module.css'
 
 export function MediaList() {
   const [items, setItems] = useState<MediaItem[]>()
   const [failed, setFailed] = useState(false)
+  // Refetch whenever footage from a fresh upload is selected.
+  const uploadedMediaId = useProjectStore((state) => state.video?.mediaId)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -14,7 +17,7 @@ export function MediaList() {
         if (!(error instanceof DOMException && error.name === 'AbortError')) setFailed(true)
       })
     return () => controller.abort()
-  }, [])
+  }, [uploadedMediaId])
 
   return (
     <section className={styles.panel} aria-labelledby="media-title">
