@@ -15,6 +15,7 @@ import { config } from './config'
 import { createMediaService } from './media'
 import type { QueueOutcome } from './queue'
 import { MAX_DELIVERIES, createRenderQueue } from './queue'
+import { resolveAnalysis } from './render-analysis'
 import { createRenderJobService, type RenderJob } from './render-jobs'
 
 const media = createMediaService(config)
@@ -144,39 +145,13 @@ const runPrepare = async (job: RenderJob): Promise<QueueOutcome> => {
 }
 
 const runRender = async (job: RenderJob): Promise<QueueOutcome> => {
-  let record: AnalysisRecord | null
-  if (job.analysisId) {
-    record = await analyses!.get(job.analysisId, job.ownerId)
-    if (!record) return abort(job, 'разбор не найден или недоступен владельцу')
-    if (record.status !== 'done') return abort(job, `разбор не готов (${record.status})`)
-  } else {
-    // Готовый разбор того же исходника переиспользуем: модели платные.
-    // Незавершённый — тоже: иначе каждая повторная доставка начинала бы новый
-    // разбор и оставляла за собой брошенные записи.
-    record =
-      (await analyses!.latestDone(job.ownerId, job.sourceMediaId)) ??
-      (await analyses!.latestPending(job.ownerId, job.sourceMediaId)) ??
-      (await analyses!.create({
-        id: crypto.randomUUID(),
-        ownerId: job.ownerId,
-        sourceMediaId: job.sourceMediaId,
-      }))
-    if (record.status !== 'done') {
-      const claimed = await analyses!.claim(record.id)
-      if (!claimed) {
-        // Разбор завершился помимо нас: перечитываем, чтобы не рендерить по
-        // пустой записи.
-        const fresh = await analyses!.get(record.id, job.ownerId)
-        if (!fresh || fresh.status !== 'done') {
-          return abort(job, `разбор не удался: ${fresh?.error ?? 'состояние неизвестно'}`)
-        }
-        record = fresh
-      } else {
-        const step = await prepareAnalysis(job, claimed)
-        if ('outcome' in step) return step.outcome
-        record = step.value
-      }
-    }
+  const choice = await resolveAnalysis(analyses!, job)
+  if (choice.kind === 'failed') return abort(job, choice.reason)
+  let record = choice.record
+  if (choice.kind === 'prepare') {
+    const step = await prepareAnalysis(job, record)
+    if ('outcome' in step) return step.outcome
+    record = step.value
   }
 
   if (record.people.length === 0) {
