@@ -19,9 +19,13 @@ class MetaError(Exception):
 
 
 class MetaClient:
-    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None):
+    def __init__(
+        self, settings: Settings, transport: httpx.BaseTransport | None = None
+    ):
         self.settings = settings
-        key = settings.model_api_key.get_secret_value() if settings.model_api_key else ""
+        key = (
+            settings.model_api_key.get_secret_value() if settings.model_api_key else ""
+        )
         self.client = httpx.Client(
             base_url=settings.model_api_base_url.rstrip("/") + "/",
             headers={"Authorization": f"Bearer {key}"},
@@ -34,8 +38,13 @@ class MetaClient:
         self.client.close()
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
-        if not self.settings.model_api_key or not self.settings.model_api_key.get_secret_value():
-            raise MetaError("model_unconfigured", "Set MODEL_API_KEY on the AI service.")
+        if (
+            not self.settings.model_api_key
+            or not self.settings.model_api_key.get_secret_value()
+        ):
+            raise MetaError(
+                "model_unconfigured", "Set MODEL_API_KEY on the AI service."
+            )
         for attempt in range(self.settings.model_max_retries + 1):
             # Multipart file objects must be rewound before a retry.
             for item in (kwargs.get("files") or {}).values():
@@ -48,22 +57,34 @@ class MetaClient:
                 if attempt < self.settings.model_max_retries:
                     time.sleep(0.5 * 2**attempt)
                     continue
-                raise MetaError("model_unavailable", "Could not reach Meta Model API.") from None
+                raise MetaError(
+                    "model_unavailable", "Could not reach Meta Model API."
+                ) from None
             if response.status_code in (401, 403):
-                raise MetaError("model_auth", "Meta API rejected MODEL_API_KEY or model access.")
+                raise MetaError(
+                    "model_auth", "Meta API rejected MODEL_API_KEY or model access."
+                )
             if response.status_code == 429 or response.status_code >= 500:
                 if attempt < self.settings.model_max_retries:
                     time.sleep(0.5 * 2**attempt)
                     continue
-                raise MetaError("model_busy", "Meta Model API is busy; try again later.")
+                raise MetaError(
+                    "model_busy", "Meta Model API is busy; try again later."
+                )
             if response.is_error:
-                raise MetaError("model_request", "Meta Model API rejected the media or request.")
+                raise MetaError(
+                    "model_request", "Meta Model API rejected the media or request."
+                )
             try:
                 data = response.json()
             except ValueError:
-                raise MetaError("model_response", "Meta returned an invalid response.") from None
+                raise MetaError(
+                    "model_response", "Meta returned an invalid response."
+                ) from None
             if not isinstance(data, dict):
-                raise MetaError("model_response", "Meta returned an invalid response object.")
+                raise MetaError(
+                    "model_response", "Meta returned an invalid response object."
+                )
             return data
         raise MetaError("model_unavailable", "Meta Model API is unavailable.")
 
@@ -82,8 +103,14 @@ class MetaClient:
                 files={"file": ("clip.mp4", stream, "video/mp4")},
             )
         file_id = upload.get("id")
-        if not isinstance(file_id, str) or not file_id.startswith("file-") or "/" in file_id:
-            raise MetaError("model_response", "Meta did not return an uploaded file ID.")
+        if (
+            not isinstance(file_id, str)
+            or not file_id.startswith("file-")
+            or "/" in file_id
+        ):
+            raise MetaError(
+                "model_response", "Meta did not return an uploaded file ID."
+            )
         try:
             prompt = (
                 f"Plan a compelling vertical short from this {duration:.3f}-second video. "
@@ -127,7 +154,9 @@ class MetaClient:
                 },
             )
             if response.get("status") not in (None, "completed"):
-                raise MetaError("model_response", "Meta could not complete video analysis.")
+                raise MetaError(
+                    "model_response", "Meta could not complete video analysis."
+                )
             text = "".join(
                 part.get("text", "")
                 for item in response.get("output", [])
@@ -138,7 +167,9 @@ class MetaClient:
             try:
                 return Analysis.model_validate_json(text)
             except (ValidationError, ValueError, TypeError):
-                raise MetaError("model_response", "Meta returned an unusable edit plan.") from None
+                raise MetaError(
+                    "model_response", "Meta returned an unusable edit plan."
+                ) from None
         finally:
             # The uploaded file also has a one-hour expiration.
             with suppress(MetaError):
@@ -177,5 +208,7 @@ class MetaClient:
                 or turn["endMs"] < turn["startMs"]
                 or not isinstance(turn.get("transcript"), str)
             ):
-                raise MetaError("model_response", "Meta returned invalid speech timestamps.")
+                raise MetaError(
+                    "model_response", "Meta returned invalid speech timestamps."
+                )
         return turns

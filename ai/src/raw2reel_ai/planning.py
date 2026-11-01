@@ -34,7 +34,9 @@ def choose_segments(
         if duration <= 0.05:
             continue
         result.append(
-            segment.model_copy(update={"end": min(segment.start + duration, source_duration)})
+            segment.model_copy(
+                update={"end": min(segment.start + duration, source_duration)}
+            )
         )
         remaining -= duration
         if remaining <= 0.05:
@@ -50,7 +52,9 @@ def quantize_segments(segments: list[Segment], fps: int = 30) -> list[Segment]:
     for segment in segments:
         frames = math.floor((segment.end - segment.start) * fps + 1e-6)
         if frames > 0:
-            result.append(segment.model_copy(update={"end": segment.start + frames / fps}))
+            result.append(
+                segment.model_copy(update={"end": segment.start + frames / fps})
+            )
     if not result:
         raise ValueError("Selected footage is shorter than one output frame")
     return result
@@ -65,9 +69,9 @@ def align_to_beats(segments: list[Segment], beats: list[float]) -> list[Segment]
         candidates = [b for b in beats if offset + 0.25 < b <= end]
         if candidates and index < len(segments) - 1:
             end = candidates[-1]
-        cut = quantize_segments([segment.model_copy(update={"end": segment.start + end - offset})])[
-            0
-        ]
+        cut = quantize_segments(
+            [segment.model_copy(update={"end": segment.start + end - offset})]
+        )[0]
         result.append(cut)
         offset += cut.end - cut.start
     return result

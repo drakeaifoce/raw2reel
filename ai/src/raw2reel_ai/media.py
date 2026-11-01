@@ -37,7 +37,9 @@ class MediaTools:
             )
         except FileNotFoundError:
             variable = (
-                "FFPROBE_PATH" if arguments[0] == self.settings.ffprobe_path else "FFMPEG_PATH"
+                "FFPROBE_PATH"
+                if arguments[0] == self.settings.ffprobe_path
+                else "FFMPEG_PATH"
             )
             raise MediaError(
                 f"Cannot find executable {Path(arguments[0]).name!r}. Set {variable} "
@@ -107,24 +109,37 @@ class MediaTools:
             if primary is None or not math.isfinite(duration) or duration <= 0:
                 raise ValueError
             if duration > (self.settings.max_source_seconds if video else 600):
-                raise MediaError("Video must be at most 120 seconds; music at most 10 minutes.")
+                raise MediaError(
+                    "Video must be at most 120 seconds; music at most 10 minutes."
+                )
             if video:
-                if not set(data["format"]["format_name"].split(",")).intersection({"mov", "mp4"}):
+                if not set(data["format"]["format_name"].split(",")).intersection(
+                    {"mov", "mp4"}
+                ):
                     raise MediaError("Upload an MP4 or MOV video.")
                 if primary.get("width", 0) * primary.get("height", 0) > 12_000_000:
-                    raise MediaError("Video resolution is too large; use 4K or smaller.")
+                    raise MediaError(
+                        "Video resolution is too large; use 4K or smaller."
+                    )
             return {
                 "duration": duration,
                 "width": primary.get("width"),
                 "height": primary.get("height"),
                 "has_audio": any(s["codec_type"] == "audio" for s in streams),
                 "audio_codec": next(
-                    (s.get("codec_name") for s in streams if s["codec_type"] == "audio"), None
+                    (
+                        s.get("codec_name")
+                        for s in streams
+                        if s["codec_type"] == "audio"
+                    ),
+                    None,
                 ),
                 "codec": primary.get("codec_name"),
             }
         except (ValueError, KeyError, TypeError, StopIteration):
-            raise MediaError("This file has no usable media stream or duration.") from None
+            raise MediaError(
+                "This file has no usable media stream or duration."
+            ) from None
 
     def prepare_analysis(self, source: Path, output: Path):
         # Meta accepts MP4; MOV/rotated sources are normalized and audio is handled by Voice.
@@ -205,7 +220,9 @@ class MediaTools:
             if norm <= 0 or correlations[lag] / norm < 0.15:
                 return None, []
             phase = max(range(lag), key=lambda p: sum(onset[p::lag]))
-            return round(6000 / lag, 1), [i / 100 for i in range(phase + 1, len(onset), lag)]
+            return round(6000 / lag, 1), [
+                i / 100 for i in range(phase + 1, len(onset), lag)
+            ]
         finally:
             audio.unlink(missing_ok=True)
 
@@ -278,7 +295,9 @@ class MediaTools:
         listing.write_text("\n".join(f"file '{p.name}'" for p in outputs))
         # PCM intermediates avoid adding an AAC encoder delay at every cut.
         joined = directory / "joined.mov"
-        self.ffmpeg("-f", "concat", "-safe", "1", "-i", str(listing), "-c", "copy", str(joined))
+        self.ffmpeg(
+            "-f", "concat", "-safe", "1", "-i", str(listing), "-c", "copy", str(joined)
+        )
         subtitle = directory / "captions.srt"
         subtitle.write_text(srt, encoding="utf-8")
         result = directory / "render.mp4"
@@ -334,7 +353,9 @@ class MediaTools:
         ]
         self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
-        info["audio_mix"] = "normalized_foreground_with_ducked_music" if music else "original"
+        info["audio_mix"] = (
+            "normalized_foreground_with_ducked_music" if music else "original"
+        )
         if (
             info["width"] != 720
             or info["height"] != 1280

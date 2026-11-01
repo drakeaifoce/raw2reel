@@ -1,5 +1,4 @@
 import pytest
-
 import raw2reel_ai.config as config
 from raw2reel_ai.media import MediaError, MediaTools
 
@@ -35,10 +34,15 @@ def test_system_tool_has_priority_over_local_copy(tmp_path, monkeypatch):
     executable(system, "ffprobe", "system ffprobe")
     monkeypatch.setenv("PATH", str(system))
     settings = config.Settings(_env_file=None)
-    assert MediaTools(settings).run([settings.ffprobe_path, "-version"]) == b"system ffprobe"
+    assert (
+        MediaTools(settings).run([settings.ffprobe_path, "-version"])
+        == b"system ffprobe"
+    )
 
 
 def test_missing_probe_explains_which_setting_to_fix(tmp_path):
-    settings = config.Settings(_env_file=None, ffprobe_path=str(tmp_path / "not-installed"))
+    settings = config.Settings(
+        _env_file=None, ffprobe_path=str(tmp_path / "not-installed")
+    )
     with pytest.raises(MediaError, match="FFPROBE_PATH"):
         MediaTools(settings).run([settings.ffprobe_path, "-version"])

@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from raw2reel_ai.models import Analysis, Segment
 from raw2reel_ai.planning import choose_segments, make_srt
 
@@ -48,7 +47,9 @@ def test_out_of_bounds_and_overlaps_rejected():
         ],
     ]:
         with pytest.raises(ValueError):
-            choose_segments(Analysis.model_validate({**base, "segments": segments}), [], 10, 20)
+            choose_segments(
+                Analysis.model_validate({**base, "segments": segments}), [], 10, 20
+            )
 
 
 def test_captions_are_clipped_and_remapped_across_reordered_cuts():
