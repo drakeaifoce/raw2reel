@@ -23,9 +23,7 @@ from .models import RenderRequest
 from .pipeline import ReelPipeline
 
 
-def create_app(
-    service_settings: Settings | None = None, *, pipeline_factory=ReelPipeline
-):
+def create_app(service_settings: Settings | None = None, *, pipeline_factory=ReelPipeline):
     settings = service_settings or get_settings()
     app = FastAPI(title="raw2reel-ai", version="0.0.0")
     render_lock = threading.Lock()
@@ -42,9 +40,7 @@ def create_app(
         if not token or not token.get_secret_value():
             raise HTTPException(503, "Set AI_SERVICE_TOKEN on the AI service.")
         supplied = credentials.credentials if credentials else ""
-        if not hmac.compare_digest(
-            supplied.encode(), token.get_secret_value().encode()
-        ):
+        if not hmac.compare_digest(supplied.encode(), token.get_secret_value().encode()):
             raise HTTPException(401, "Invalid AI service token.")
 
     @app.get("/health")
@@ -130,9 +126,7 @@ def create_app(
                 return message
 
             request = Request(request.scope, limited_receive)
-            async with request.form(
-                max_files=2, max_fields=4, max_part_size=16384
-            ) as form:
+            async with request.form(max_files=2, max_fields=4, max_part_size=16384) as form:
                 try:
                     options = RenderRequest(
                         duration=form.get("duration", 27),
@@ -143,9 +137,7 @@ def create_app(
                     if captions not in {"true", "false"}:
                         raise ValueError
                 except (ValidationError, ValueError, TypeError):
-                    raise HTTPException(
-                        422, "Invalid duration, captions or subject_ids."
-                    ) from None
+                    raise HTTPException(422, "Invalid duration, captions or subject_ids.") from None
                 work = tempfile.TemporaryDirectory(prefix="raw2reel-http-")
                 directory = Path(work.name)
 
@@ -162,9 +154,7 @@ def create_app(
                         while chunk := await upload.read(1024 * 1024):
                             size += len(chunk)
                             if size > maximum:
-                                raise HTTPException(
-                                    413, f"{name} exceeds the file size limit."
-                                )
+                                raise HTTPException(413, f"{name} exceeds the file size limit.")
                             stream.write(chunk)
                     if not size:
                         raise HTTPException(422, f"{name} is empty.")

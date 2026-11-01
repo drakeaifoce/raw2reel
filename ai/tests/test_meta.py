@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 from pydantic import SecretStr
+
 from raw2reel_ai.config import Settings
 from raw2reel_ai.meta import MetaClient, MetaError
 
@@ -33,9 +34,7 @@ def test_meta_upload_reference_schema_and_remote_file_cleanup(tmp_path):
                     "output": [
                         {
                             "type": "message",
-                            "content": [
-                                {"type": "output_text", "text": json.dumps(plan)}
-                            ],
+                            "content": [{"type": "output_text", "text": json.dumps(plan)}],
                         }
                     ],
                 },
@@ -56,9 +55,7 @@ def test_meta_upload_reference_schema_and_remote_file_cleanup(tmp_path):
 def test_transcribe_uses_documented_multipart_and_turns(tmp_path):
     def handle(request):
         assert request.url.path == "/v1/asr/transcribe"
-        assert (
-            b'name="request"' in request.content and b'name="audio"' in request.content
-        )
+        assert b'name="request"' in request.content and b'name="audio"' in request.content
         assert b"DIARIZATION" in request.content and b"WAV" in request.content
         return httpx.Response(
             200,
@@ -92,9 +89,7 @@ def test_auth_error_is_not_retried_or_leaked(tmp_path):
 
     def handle(request):
         calls.append(request)
-        return httpx.Response(
-            401, json={"error": {"message": "private upstream test-key"}}
-        )
+        return httpx.Response(401, json={"error": {"message": "private upstream test-key"}})
 
     client = MetaClient(
         Settings(model_api_key=SecretStr("test-key")),

@@ -24,16 +24,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Server-side environment file",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    analyze = commands.add_parser(
-        "analyze", help="Save a reusable analysis and timed transcript"
-    )
+    analyze = commands.add_parser("analyze", help="Save a reusable analysis and timed transcript")
     analyze.add_argument("video", type=Path)
     analyze.add_argument("--output", "-o", type=Path, required=True)
     analyze.add_argument("--no-transcription", action="store_true")
     analyze.add_argument("--overwrite", action="store_true")
-    render = commands.add_parser(
-        "render", help="Create a portrait MP4 and metadata sidecars"
-    )
+    render = commands.add_parser("render", help="Create a portrait MP4 and metadata sidecars")
     render.add_argument("video", type=Path)
     render.add_argument("--output", "-o", type=Path, required=True)
     render.add_argument("--music", type=Path)
@@ -41,12 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument(
         "--subject", action="append", default=[], help="Person ID from a saved analysis"
     )
-    render.add_argument(
-        "--analysis", type=Path, help="Analysis artifact from the analyze command"
-    )
-    render.add_argument(
-        "--transcript", type=Path, help="JSON file containing timed Voice turns"
-    )
+    render.add_argument("--analysis", type=Path, help="Analysis artifact from the analyze command")
+    render.add_argument("--transcript", type=Path, help="JSON file containing timed Voice turns")
     render.add_argument("--no-captions", action="store_true")
     render.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)

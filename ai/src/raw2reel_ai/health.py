@@ -22,9 +22,7 @@ def _check_mongo() -> Dependency:
     if not settings.mongo_url:
         return {"state": "unconfigured"}
     try:
-        client: MongoClient = MongoClient(
-            settings.mongo_url, serverSelectionTimeoutMS=3000
-        )
+        client: MongoClient = MongoClient(settings.mongo_url, serverSelectionTimeoutMS=3000)
         try:
             # Именно операция с базой, а не ping: в Cosmos ping отвечает через
             # шлюз и проходит даже с недействительным ключом, то есть молчит
@@ -41,9 +39,7 @@ def _check_blob() -> Dependency:
     if not settings.azure_storage_connection_string:
         return {"state": "unconfigured"}
     try:
-        service = BlobServiceClient.from_connection_string(
-            settings.azure_storage_connection_string
-        )
+        service = BlobServiceClient.from_connection_string(settings.azure_storage_connection_string)
         service.get_container_client(
             settings.azure_blob_container_uploads
         ).get_container_properties()

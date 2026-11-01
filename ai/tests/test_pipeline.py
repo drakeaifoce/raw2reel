@@ -8,6 +8,7 @@ import wave
 import httpx
 import pytest
 from pydantic import SecretStr
+
 from raw2reel_ai.config import Settings
 from raw2reel_ai.media import MediaTools
 from raw2reel_ai.meta import MetaClient
@@ -17,9 +18,7 @@ from raw2reel_ai.pipeline import ReelPipeline
 @pytest.fixture
 def tools():
     settings = Settings()
-    if not shutil.which(settings.ffmpeg_path) or not shutil.which(
-        settings.ffprobe_path
-    ):
+    if not shutil.which(settings.ffmpeg_path) or not shutil.which(settings.ffprobe_path):
         pytest.skip("Install ffmpeg and ffprobe for media integration tests")
     return MediaTools(settings)
 
@@ -99,9 +98,7 @@ def model_transport(request):
 
 
 def test_pipeline_creates_valid_mp4_and_truthful_sidecars(video, tmp_path, tools):
-    settings = tools.settings.model_copy(
-        update={"model_api_key": SecretStr("test-key")}
-    )
+    settings = tools.settings.model_copy(update={"model_api_key": SecretStr("test-key")})
     meta = MetaClient(settings, transport=httpx.MockTransport(model_transport))
     output = tmp_path / "reel.mp4"
     stages = []
@@ -113,18 +110,13 @@ def test_pipeline_creates_valid_mp4_and_truthful_sidecars(video, tmp_path, tools
     assert abs(info["duration"] - 1.5) < 0.3 and info["has_audio"]
     assert manifest["captions"] is True and manifest["subjects_tracked"] is False
     assert manifest["cuts"] == 1
-    assert (
-        "00:00:01,000 --> 00:00:01,500"
-        in output.with_suffix(".captions.srt").read_text()
-    )
+    assert "00:00:01,000 --> 00:00:01,500" in output.with_suffix(".captions.srt").read_text()
     assert "test-key" not in output.with_suffix(".manifest.json").read_text()
     assert stages[-1] == "done"
     assert not list(tmp_path.glob(".raw2reel-*"))
 
 
-def test_existing_output_and_source_cannot_be_overwritten_implicitly(
-    video, tmp_path, tools
-):
+def test_existing_output_and_source_cannot_be_overwritten_implicitly(video, tmp_path, tools):
     pipeline = ReelPipeline(tools.settings)
     with pytest.raises(ValueError):
         pipeline.render(video, video, captions=False)
@@ -164,9 +156,7 @@ def test_analysis_artifact_is_bound_to_original_file(video, tmp_path, tools):
     changed = tmp_path / "changed.mp4"
     changed.write_bytes(video.read_bytes() + b"different")
     with pytest.raises(ValueError, match="does not match"):
-        pipeline.render(
-            changed, tmp_path / "result.mp4", analysis_path=artifact, captions=False
-        )
+        pipeline.render(changed, tmp_path / "result.mp4", analysis_path=artifact, captions=False)
 
 
 def test_sidecar_can_never_overwrite_source_even_with_overwrite(video, tmp_path, tools):
@@ -221,9 +211,7 @@ def test_silent_source_and_short_music_render_offline(tmp_path, tools):
                     "summary": "Blue",
                     "hook": "Blue",
                     "subjects": [],
-                    "segments": [
-                        {"start": 0, "end": 1, "reason": "blue", "subject_ids": []}
-                    ],
+                    "segments": [{"start": 0, "end": 1, "reason": "blue", "subject_ids": []}],
                 },
                 "turns": [],
             }
@@ -301,9 +289,7 @@ def test_cut_timeline_is_frame_accurate(video, tmp_path, tools):
         )
     )
     with ReelPipeline(tools.settings) as pipeline:
-        result = pipeline.render(
-            video, tmp_path / "quantized.mp4", analysis_path=artifact
-        )
+        result = pipeline.render(video, tmp_path / "quantized.mp4", analysis_path=artifact)
     durations = [s["end"] - s["start"] for s in result["segments"]]
     assert all(abs(d * 30 - round(d * 30)) < 1e-6 for d in durations)
     assert abs(result["duration"] - sum(durations)) <= 1 / 30 + 0.001
@@ -408,6 +394,7 @@ def test_many_short_cuts_do_not_accumulate_timeline_drift(tmp_path, tools):
 
 def test_caption_font_uses_output_pixels_and_safe_bottom_margin(tmp_path, tools):
     from PIL import Image
+
     from raw2reel_ai.models import Segment
 
     source = tmp_path / "black.mp4"
@@ -434,9 +421,7 @@ def test_caption_font_uses_output_pixels_and_safe_bottom_margin(tmp_path, tools)
     frame = tmp_path / "caption.png"
     tools.ffmpeg("-ss", "0.5", "-i", str(rendered), "-frames:v", "1", str(frame))
     with Image.open(frame) as image:
-        box = (
-            image.convert("L").point(lambda value: 255 if value > 200 else 0).getbbox()
-        )
+        box = image.convert("L").point(lambda value: 255 if value > 200 else 0).getbbox()
     assert box is not None
     assert 15 <= box[3] - box[1] <= 45
     assert 1150 <= box[3] <= 1220
@@ -495,14 +480,8 @@ def test_quiet_foreground_stays_above_hot_music_and_music_ducks(tmp_path, tools)
 
     def amplitude_at(frequency, start, end):
         window = samples[int(start * rate) : int(end * rate)]
-        cosine = sum(
-            v * math.cos(2 * math.pi * frequency * i / rate)
-            for i, v in enumerate(window)
-        )
-        sine = sum(
-            v * math.sin(2 * math.pi * frequency * i / rate)
-            for i, v in enumerate(window)
-        )
+        cosine = sum(v * math.cos(2 * math.pi * frequency * i / rate) for i, v in enumerate(window))
+        sine = sum(v * math.sin(2 * math.pi * frequency * i / rate) for i, v in enumerate(window))
         return 2 * math.hypot(cosine, sine) / len(window)
 
     foreground = amplitude_at(440, 1.6, 2.6)

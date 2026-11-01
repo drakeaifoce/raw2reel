@@ -12,8 +12,7 @@ from .config import Settings
 from .media import MediaTools
 from .meta import MetaClient
 from .models import Analysis, RenderRequest
-from .planning import (align_to_beats, choose_segments, make_srt,
-                       quantize_segments)
+from .planning import align_to_beats, choose_segments, make_srt, quantize_segments
 
 
 def _fingerprint(path: Path) -> str:
@@ -53,9 +52,7 @@ def _turns(value) -> list[dict]:
 
 
 class ReelPipeline:
-    def __init__(
-        self, settings: Settings | None = None, *, meta: MetaClient | None = None
-    ):
+    def __init__(self, settings: Settings | None = None, *, meta: MetaClient | None = None):
         self.settings = settings or Settings()
         self.media = MediaTools(self.settings)
         self.meta = meta or MetaClient(self.settings)
@@ -71,10 +68,7 @@ class ReelPipeline:
 
     def _source(self, source: Path) -> tuple[Path, dict]:
         source = Path(source).resolve(strict=True)
-        if (
-            not source.is_file()
-            or source.stat().st_size > self.settings.max_upload_bytes
-        ):
+        if not source.is_file() or source.stat().st_size > self.settings.max_upload_bytes:
             raise ValueError("Input must be a video file of at most 150 MiB.")
         return source, self.media.probe(source)
 
@@ -85,9 +79,7 @@ class ReelPipeline:
         self.media.extract_audio(source, audio)
         return self.meta.transcribe(audio) if _has_signal(audio) else []
 
-    def _analysis(
-        self, source: Path, info: dict, work: Path, turns: list[dict]
-    ) -> Analysis:
+    def _analysis(self, source: Path, info: dict, work: Path, turns: list[dict]) -> Analysis:
         prepared = work / "analysis.mp4"
         self.media.prepare_analysis(source, prepared)
         analysis = self.meta.analyze(prepared, info["duration"], transcript=turns)
@@ -95,9 +87,7 @@ class ReelPipeline:
         return analysis
 
     @staticmethod
-    def _artifact(
-        source: Path, info: dict, analysis: Analysis, turns: list[dict] | None
-    ) -> dict:
+    def _artifact(source: Path, info: dict, analysis: Analysis, turns: list[dict] | None) -> dict:
         return {
             "version": 1,
             "source": {
@@ -125,13 +115,9 @@ class ReelPipeline:
         if output == source:
             raise ValueError("Analysis output must not overwrite the source video.")
         if output.exists() and not overwrite:
-            raise FileExistsError(
-                "Analysis output exists; use --overwrite to replace it."
-            )
+            raise FileExistsError("Analysis output exists; use --overwrite to replace it.")
         output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=".raw2reel-", dir=output.parent
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix=".raw2reel-", dir=output.parent) as directory:
             work = Path(directory)
             progress("transcribing")
             turns = self._speech(source, info, work) if transcribe else None
@@ -179,13 +165,9 @@ class ReelPipeline:
         )
         for destination in [output, *artifacts.values()]:
             if destination in inputs:
-                raise ValueError(
-                    "Output and sidecars must not overwrite any input file."
-                )
+                raise ValueError("Output and sidecars must not overwrite any input file.")
             if destination.exists() and not overwrite:
-                raise FileExistsError(
-                    "Output or sidecar exists; use --overwrite to replace it."
-                )
+                raise FileExistsError("Output or sidecar exists; use --overwrite to replace it.")
         if music is not None:
             music = Path(music).resolve(strict=True)
             if music == output or music.stat().st_size > self.settings.max_music_bytes:
@@ -195,9 +177,7 @@ class ReelPipeline:
         turns = None
         if analysis_path:
             artifact = json.loads(Path(analysis_path).read_text(encoding="utf-8"))
-            artifact_source = (
-                artifact.get("source") if isinstance(artifact, dict) else None
-            )
+            artifact_source = artifact.get("source") if isinstance(artifact, dict) else None
             if not isinstance(artifact_source, dict) or artifact_source.get(
                 "sha256"
             ) != _fingerprint(source):
@@ -207,13 +187,9 @@ class ReelPipeline:
                 turns = _turns(artifact["turns"])
         if transcript_path:
             transcript = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
-            turns = _turns(
-                transcript.get("turns") if isinstance(transcript, dict) else transcript
-            )
+            turns = _turns(transcript.get("turns") if isinstance(transcript, dict) else transcript)
         output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=".raw2reel-", dir=output.parent
-        ) as directory:
+        with tempfile.TemporaryDirectory(prefix=".raw2reel-", dir=output.parent) as directory:
             work = Path(directory)
             if turns is None and captions:
                 progress("transcribing")
@@ -222,9 +198,7 @@ class ReelPipeline:
                 progress("analyzing")
                 analysis = self._analysis(source, info, work, turns or [])
             segments = quantize_segments(
-                choose_segments(
-                    analysis, options.subject_ids, duration, info["duration"]
-                )
+                choose_segments(analysis, options.subject_ids, duration, info["duration"])
             )
             warnings = [
                 "Portrait framing fits the image; exact person tracking is not implemented."
@@ -236,9 +210,7 @@ class ReelPipeline:
                 if beats:
                     segments = align_to_beats(segments, beats)
                 else:
-                    warnings.append(
-                        "Music rhythm uncertain; cuts follow the edit plan."
-                    )
+                    warnings.append("Music rhythm uncertain; cuts follow the edit plan.")
             if options.subject_ids:
                 warnings.append(
                     "People filtering uses approximate Muse scene observations, "
@@ -266,14 +238,10 @@ class ReelPipeline:
                 "summary": analysis.summary,
                 "configured_models": {
                     "analysis": self.settings.muse_spark_model,
-                    "transcription": self.settings.muse_voice_model
-                    if captions
-                    else None,
+                    "transcription": self.settings.muse_voice_model if captions else None,
                 },
             }
-            _write_json(
-                work / "analysis.json", self._artifact(source, info, analysis, turns)
-            )
+            _write_json(work / "analysis.json", self._artifact(source, info, analysis, turns))
             _write_json(work / "manifest.json", manifest)
             (work / "captions.srt").write_text(srt, encoding="utf-8")
             progress("saving")
