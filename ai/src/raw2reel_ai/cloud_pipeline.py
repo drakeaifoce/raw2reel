@@ -1,8 +1,11 @@
 """Prepare -> user selects anonymous person IDs -> track -> budgeted edit -> render."""
 
+import io
 import json
 import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 from .analysis import PreparedAnalysis, read_analysis, write_analysis
 from .cloud_media import CloudMedia, face_thumbnail
@@ -12,6 +15,7 @@ from .cloud_models import (
     Catalog,
     EditPlan,
     FaceBoxes,
+    FaceFilteringReport,
     Grouping,
     Observation,
     Person,
@@ -20,6 +24,7 @@ from .cloud_models import (
     TranscriptTurn,
 )
 from .config import Settings
+from .face_filters import FaceFilters
 from .media import MediaTools
 from .meta import MetaClient, MetaError
 from .models import Segment
@@ -68,6 +73,13 @@ class CloudPipeline:
                 }
             )
             observations, images = [], {}
+            filters = FaceFilters(self.settings)
+            filtering = FaceFilteringReport(
+                min_size_enabled=self.settings.cloud_face_min_size_enabled,
+                min_size_px=self.settings.cloud_face_min_size_px,
+                dedup_enabled=self.settings.cloud_face_dedup_enabled,
+                dedup_iou=self.settings.cloud_face_dedup_iou,
+            )
             warnings = [
                 "Cloud matching is approximate; tiny, obscured and brief faces may be missed.",
                 "Discovery is sampled; unobserved scenes have unknown presence.",
@@ -84,6 +96,7 @@ class CloudPipeline:
                 if not boxes:
                     fallback = self.cloud.structured(
                         FaceBoxes,
+                        FaceFilteringReport,
                         "Locate visible faces in this image. Return normalized xyxy boxes; "
                         "return [] if none are visible.",
                         images=[frame],
@@ -92,7 +105,14 @@ class CloudPipeline:
                     normalized = [b.bbox for b in fallback.faces]
                 else:
                     normalized = [b.bbox for b in boxes if b.frame == 0]
-                for bbox in normalized[:16]:
+                with Image.open(io.BytesIO(frame)) as image:
+                    result = filters.apply(normalized, image.size)
+                filtering.candidates_before += len(normalized)
+                filtering.candidates_after += len(result.boxes)
+                filtering.removed_small += result.removed_small
+                filtering.removed_duplicates += result.removed_duplicates
+                progress(f"filtering_faces {len(normalized)} -> {len(result.boxes)}")
+                for bbox in result.boxes[:16]:
                     if len(observations) >= self.settings.cloud_max_observations:
                         break
                     identity = f"o{len(observations)}"
@@ -166,12 +186,13 @@ class CloudPipeline:
                 people=list(people.values()),
                 turns=turns,
                 warnings=warnings,
+                face_filtering=filtering,
                 provenance={
                     "sam": self.settings.sam_model,
                     "spark": self.settings.muse_spark_model,
                     "voice": self.settings.muse_voice_model,
                     "schema": "2",
-                    "prompt": "cloud-edit-1",
+                    "prompt": "cloud-edit-2",
                 },
             )
             pending = work / "prepared.json"

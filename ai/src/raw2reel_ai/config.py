@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     cloud_track_seconds: float = Field(default=120, gt=0, le=300)
     cloud_clip_seconds: float = Field(default=8, ge=2, le=12)
     cloud_analysis_fps: int = Field(default=5, ge=2, le=10)
+    cloud_face_min_size_enabled: bool = True
+    cloud_face_min_size_px: int = Field(default=32, ge=1, le=640)
+    cloud_face_dedup_enabled: bool = True
+    cloud_face_dedup_iou: float = Field(default=0.7, gt=0, le=1)
 
     port: int = 8000
 
