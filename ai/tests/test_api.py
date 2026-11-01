@@ -27,3 +27,9 @@ def test_ready_без_зависимостей_отвечает_200() -> None:
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["ready"] is True
+
+
+def test_legacy_render_route_is_removed():
+    assert client.post("/v1/render").status_code == 404
+    paths = client.get("/openapi.json").json()["paths"]
+    assert set(paths) == {"/health", "/ready", "/version", "/v2/prepare", "/v2/render"}

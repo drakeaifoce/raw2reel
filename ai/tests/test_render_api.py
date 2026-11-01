@@ -32,17 +32,17 @@ def client(**settings):
     return TestClient(
         create_app(
             Settings(_env_file=None, ai_service_token="test", **settings),
-            pipeline_factory=FakePipeline,
+            cloud_pipeline_factory=FakePipeline,
         )
     )
 
 
 def test_render_calls_pipeline_and_cleans_files():
     response = client().post(
-        "/v1/render",
+        "/v2/render",
         headers={"Authorization": "Bearer test"},
         files={"video": ("../../clip.mp4", b"video"), "music": ("track.mp3", b"music")},
-        data={"duration": "20", "captions": "false"},
+        data={"analysis": "{}", "person_ids": '["p1"]', "duration": "20", "captions": "false"},
     )
     assert response.status_code == 200
     assert response.content == b"rendered-mp4"
@@ -54,9 +54,9 @@ def test_render_calls_pipeline_and_cleans_files():
 
 
 def test_auth_before_parsing_upload():
-    assert client().post("/v1/render", content=b"invalid").status_code == 401
+    assert client().post("/v2/render", content=b"invalid").status_code == 401
     unconfigured = TestClient(create_app(Settings(_env_file=None)))
-    assert unconfigured.post("/v1/render").status_code == 503
+    assert unconfigured.post("/v2/render").status_code == 503
     assert unconfigured.get("/health").status_code == 200
 
 
@@ -65,17 +65,17 @@ def test_invalid_options_and_file_limits():
     assert (
         client()
         .post(
-            "/v1/render",
+            "/v2/render",
             headers=headers,
             files={"video": ("v.mp4", b"video")},
-            data={"duration": "31"},
+            data={"analysis": "{}", "person_ids": '["p1"]', "duration": "31"},
         )
         .status_code
         == 422
     )
     assert (
         client(max_upload_bytes=2)
-        .post("/v1/render", headers=headers, files={"video": ("v.mp4", b"video")})
+        .post("/v2/render", headers=headers, files={"video": ("v.mp4", b"video")})
         .status_code
         == 413
     )
@@ -88,12 +88,13 @@ def test_media_errors_are_safe():
 
     app = create_app(
         Settings(_env_file=None, ai_service_token="test"),
-        pipeline_factory=BrokenPipeline,
+        cloud_pipeline_factory=BrokenPipeline,
     )
     response = TestClient(app).post(
-        "/v1/render",
+        "/v2/render",
         headers={"Authorization": "Bearer test"},
         files={"video": ("v.mp4", b"video")},
+        data={"analysis": "{}", "person_ids": '["p1"]'},
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "media_error"
@@ -114,15 +115,16 @@ def test_busy_service_rejects_second_render():
     test_client = TestClient(
         create_app(
             Settings(_env_file=None, ai_service_token="test"),
-            pipeline_factory=WaitingPipeline,
+            cloud_pipeline_factory=WaitingPipeline,
         )
     )
 
     def send():
         return test_client.post(
-            "/v1/render",
+            "/v2/render",
             headers={"Authorization": "Bearer test"},
             files={"video": ("v.mp4", b"video")},
+            data={"analysis": "{}", "person_ids": '["p1"]'},
         )
 
     with ThreadPoolExecutor() as pool:
@@ -137,28 +139,28 @@ def test_busy_service_rejects_second_render():
 
 def test_request_body_limit_without_content_length():
     response = client(max_upload_bytes=1, max_music_bytes=1).post(
-        "/v1/render",
+        "/v2/render",
         headers={
             "Authorization": "Bearer test",
             "Content-Type": "multipart/form-data; boundary=x",
         },
-        content=iter([b"--x\r\n" + b"a" * (1024 * 1024 + 10)]),
+        content=iter([b"--x\r\n" + b"a" * (17 * 1024 * 1024 + 10)]),
     )
     assert response.status_code == 413
 
 
 def test_swagger_documents_service_bearer_token():
     schema = client().get("/openapi.json").json()
-    security = schema["paths"]["/v1/render"]["post"]["security"]
+    security = schema["paths"]["/v2/render"]["post"]["security"]
     assert security == [{"AIServiceToken": []}]
     assert schema["components"]["securitySchemes"]["AIServiceToken"]["scheme"] == "bearer"
     assert "security" not in schema["paths"]["/health"]["get"]
 
 
 def test_swagger_documents_upload_fields():
-    operation = client().get("/openapi.json").json()["paths"]["/v1/render"]["post"]
+    operation = client().get("/openapi.json").json()["paths"]["/v2/render"]["post"]
     schema = operation["requestBody"]["content"]["multipart/form-data"]["schema"]
-    assert schema["required"] == ["video"]
+    assert schema["required"] == ["video", "analysis", "person_ids"]
     assert schema["properties"]["video"]["format"] == "binary"
     assert schema["properties"]["music"]["format"] == "binary"
     assert schema["properties"]["duration"]["default"] == 27
