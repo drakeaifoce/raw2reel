@@ -240,7 +240,11 @@ def test_grouping_limit_reports_actual_reason_without_cloud_calls(tmp_path, monk
 
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
-    pipeline = CloudPipeline(Settings(_env_file=None), meta=FakeMeta(), cloud=DistinctPeople())
+    pipeline = CloudPipeline(
+        Settings(_env_file=None, cloud_face_min_size_enabled=False, cloud_face_dedup_enabled=False),
+        meta=FakeMeta(),
+        cloud=DistinctPeople(),
+    )
     monkeypatch.setattr(
         pipeline, "source", lambda _: (source, {"duration": 48, "has_audio": False})
     )

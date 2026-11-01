@@ -58,6 +58,17 @@ class TranscriptTurn(StrictModel):
         return self
 
 
+class FaceFilteringReport(StrictModel):
+    min_size_enabled: bool
+    min_size_px: int = Field(ge=1)
+    dedup_enabled: bool
+    dedup_iou: float = Field(gt=0, le=1)
+    candidates_before: int = Field(default=0, ge=0)
+    candidates_after: int = Field(default=0, ge=0)
+    removed_small: int = Field(default=0, ge=0)
+    removed_duplicates: int = Field(default=0, ge=0)
+
+
 class Catalog(StrictModel):
     version: Literal[2] = 2
     source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -68,6 +79,7 @@ class Catalog(StrictModel):
     turns: list[TranscriptTurn] = Field(max_length=2000)
     warnings: list[str] = Field(max_length=100)
     provenance: dict[str, str] = Field(max_length=20)
+    face_filtering: FaceFilteringReport | None = None
 
     @model_validator(mode="after")
     def references(self):
