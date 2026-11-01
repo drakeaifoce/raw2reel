@@ -462,7 +462,8 @@ export function createOpenAPI() {
             },
             thumbnailUrl: {
               ...string,
-              description: 'Relative path to the JPEG preview; absent when none is usable',
+              description:
+                'Path to the JPEG preview, relative to this API root: the public prefix is /api, so prepend it (/api/analyses/...). Absent when no usable preview exists.',
             },
           },
           ['id', 'label', 'observationCount'],
