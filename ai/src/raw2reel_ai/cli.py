@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import traceback
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -24,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(".env"),
         help="Server-side environment file",
     )
+    parser.add_argument(
+        "--debug", action="store_true", help="Print the original exception traceback"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     analyze = commands.add_parser("analyze", help="Save a reusable analysis and timed transcript")
     analyze.add_argument("video", type=Path)
@@ -42,13 +46,15 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("--transcript", type=Path, help="JSON file containing timed Voice turns")
     render.add_argument("--no-captions", action="store_true")
     render.add_argument("--overwrite", action="store_true")
-    prepare = commands.add_parser("prepare", help="Discover faces; save catalog and JPEGs as ZIP")
+    prepare = commands.add_parser(
+        "prepare", help="Discover faces; save catalog and thumbnails as JSON"
+    )
     prepare.add_argument("video", type=Path)
     prepare.add_argument("--output", "-o", type=Path, required=True)
     prepare.add_argument("--overwrite", action="store_true")
     cloud_render = commands.add_parser("render-v2", help="Track selected people and render an edit")
     cloud_render.add_argument("video", type=Path)
-    cloud_render.add_argument("--artifact", type=Path, required=True)
+    cloud_render.add_argument("--analysis", type=Path, required=True)
     cloud_render.add_argument("--person", action="append", required=True)
     cloud_render.add_argument("--music", type=Path)
     cloud_render.add_argument("--duration", type=float, default=27)
@@ -72,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = pipeline.render(
                     args.video,
                     args.output,
-                    artifact=args.artifact,
+                    analysis=args.analysis,
                     person_ids=args.person,
                     music=args.music,
                     duration=args.duration,
@@ -101,18 +107,33 @@ def main(argv: list[str] | None = None) -> int:
                     overwrite=args.overwrite,
                     on_progress=progress,
                 )
+        if args.command == "prepare":
+            result = {
+                "analysis": str(args.output),
+                "people": result["catalog"]["people"],
+                "warnings": result["catalog"]["warnings"],
+                "calls": len(result["calls"]),
+            }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except MetaError as error:
+        if args.debug:
+            traceback.print_exc()
         print(f"{error.code}: {error}", file=sys.stderr)
     except MediaError as error:
+        if args.debug:
+            traceback.print_exc()
         print(f"media_error: {error}", file=sys.stderr)
     except ValidationError:
+        if args.debug:
+            traceback.print_exc()
         print(
             "invalid_input: invalid settings, analysis or render options.",
             file=sys.stderr,
         )
     except (OSError, ValueError, KeyError, TypeError):
+        if args.debug:
+            traceback.print_exc()
         print(
             "invalid_input: check input files, saved analysis and output paths.",
             file=sys.stderr,

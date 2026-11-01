@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from .artifacts import read_artifact, write_artifact
+from .analysis import PreparedAnalysis, read_analysis, write_analysis
 from .cloud_media import CloudMedia, face_thumbnail
 from .cloud_meta import CloudModels
 from .cloud_models import (
@@ -53,7 +53,7 @@ class CloudPipeline:
         source, info = self.source(source)
         output = output.resolve()
         if output == source or (output.exists() and not overwrite):
-            raise ValueError("Choose a new preparation ZIP output")
+            raise ValueError("Choose a new analysis JSON output")
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".prepare-", dir=output.parent) as temp:
             work = Path(temp)
@@ -96,18 +96,17 @@ class CloudPipeline:
                     if len(observations) >= self.settings.cloud_max_observations:
                         break
                     identity = f"o{len(observations)}"
-                    name = f"faces/{identity}.jpg"
+                    name = identity
                     images[name] = face_thumbnail(frame, bbox)
-                    observations.append(
-                        Observation(id=identity, scene=index, time=time, image=name, bbox=bbox)
-                    )
+                    observations.append(Observation(id=identity, scene=index, time=time, bbox=bbox))
             progress("grouping_faces")
             people: dict[str, Person] = {}
             known = {o.id: o for o in observations}
-            for start in range(0, len(observations), 8):
-                batch = observations[start : start + 8]
+            for start in range(0, len(observations), 4):
+                batch = observations[start : start + 4]
+                progress(f"grouping_faces {start + len(batch)}/{len(observations)}")
                 references = [(p.id, known[p.observation_ids[0]]) for p in people.values()]
-                parts = [images[o.image] for _, o in references] + [images[o.image] for o in batch]
+                parts = [images[o.id] for _, o in references] + [images[o.id] for o in batch]
                 prompt = (
                     "Match anonymous characters within this video only, across these face crops. "
                     "Return one assignment for every new observation. Reuse a reference person ID "
@@ -137,7 +136,12 @@ class CloudPipeline:
                         people[a.person_id].observation_ids.append(a.observation_id)
                     else:
                         if len(people) >= 64:
-                            raise ValueError("Too many distinct people; use a shorter source")
+                            raise MetaError(
+                                "face_catalog_limit",
+                                "Face grouping produced more than 64 character cards. "
+                                "Uncertain matches may split one person into multiple cards; "
+                                "this is not a file-path error.",
+                            )
                         people[a.person_id] = Person(
                             id=a.person_id, label=a.label, observation_ids=[a.observation_id]
                         )
@@ -170,26 +174,18 @@ class CloudPipeline:
                     "prompt": "cloud-edit-1",
                 },
             )
-            pending = work / "prepared.zip"
-            write_artifact(pending, catalog, images)
+            pending = work / "prepared.json"
+            payload = write_analysis(pending, catalog, images, self.cloud.calls)
             pending.replace(output)
         progress("done")
-        return {
-            "artifact": str(output),
-            "people": [p.model_dump() for p in catalog.people],
-            "observations": [o.model_dump() for o in catalog.observations],
-            "warnings": warnings,
-            "sampled_scenes": len(indices),
-            "total_scenes": len(scenes),
-            "calls": self.cloud.calls,
-        }
+        return payload.model_dump(mode="json")
 
     def render(
         self,
         source: Path,
         output: Path,
         *,
-        artifact: Path,
+        analysis: Path | dict | PreparedAnalysis,
         person_ids: list[str],
         music: Path | None = None,
         duration=27,
@@ -205,7 +201,9 @@ class CloudPipeline:
         if not 0 < duration <= 30:
             raise ValueError("Duration must be in (0,30]")
         sidecar = output.with_suffix(".v2.json")
-        inputs = {source, artifact.resolve()}
+        inputs = {source}
+        if isinstance(analysis, Path):
+            inputs.add(analysis.resolve())
         if music:
             music = music.resolve(strict=True)
             inputs.add(music)
@@ -214,9 +212,9 @@ class CloudPipeline:
             self.tools.probe(music, video=False)
         if any(p in inputs or (p.exists() and not overwrite) for p in (output, sidecar)):
             raise ValueError("Output must not replace inputs or existing files")
-        catalog, images = read_artifact(artifact)
+        catalog, images = read_analysis(analysis)
         if catalog.source_sha256 != _fingerprint(source):
-            raise ValueError("Preparation artifact does not match source")
+            raise ValueError("Preparation analysis does not match source")
         known = {p.id: p for p in catalog.people}
         if len(set(person_ids)) != len(person_ids) or not set(person_ids) <= known.keys():
             raise ValueError("Unknown or duplicate selected person IDs")
@@ -385,7 +383,7 @@ class CloudPipeline:
             if self.tools.probe(montage)["duration"] > self.settings.cloud_review_seconds + 0.001:
                 raise ValueError("Review montage exceeds video budget")
             references = [
-                images[observations[known[pid].observation_ids[0]].image] for pid in person_ids
+                images[observations[known[pid].observation_ids[0]].id] for pid in person_ids
             ]
             plan = self.cloud.structured(
                 EditPlan,

@@ -40,15 +40,42 @@ def parse_sam(text: str) -> list[SamBox]:
 
 
 def output_text(response: dict) -> str:
-    if response.get("status") != "completed":
-        raise MetaError("model_response", "Cloud model did not finish processing.")
-    return "".join(
-        part.get("text", "")
-        for item in response.get("output", [])
-        if item.get("type") == "message"
-        for part in item.get("content", [])
-        if part.get("type") == "output_text"
-    )
+    status = response.get("status")
+    if status != "completed":
+        details = response.get("incomplete_details") or {}
+        reason = details.get("reason") if isinstance(details, dict) else None
+        if reason == "max_output_tokens":
+            raise MetaError("model_token_limit", "Cloud model stopped: max_output_tokens reached.")
+        known_status = (
+            status
+            if status in {"incomplete", "failed", "cancelled", "queued", "in_progress"}
+            else "unknown"
+        )
+        raise MetaError(
+            "model_response", f"Cloud model did not finish processing (status={known_status})."
+        )
+    items = response.get("output")
+    if not isinstance(items, list):
+        raise MetaError("model_response", "Cloud model returned no output array.")
+    texts = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise MetaError("model_response", "Cloud model returned invalid output.")
+        if item.get("type") != "message":
+            continue
+        parts = item.get("content")
+        if not isinstance(parts, list):
+            raise MetaError("model_response", "Cloud model returned invalid message content.")
+        for part in parts:
+            if not isinstance(part, dict):
+                raise MetaError("model_response", "Cloud model returned invalid message content.")
+            if part.get("type") == "refusal":
+                raise MetaError("model_refusal", "Cloud model declined the requested analysis.")
+            if part.get("type") == "output_text":
+                if not isinstance(part.get("text"), str):
+                    raise MetaError("model_response", "Cloud model returned invalid output text.")
+                texts.append(part["text"])
+    return "".join(texts)
 
 
 def image_part(data: bytes):
@@ -139,6 +166,11 @@ class CloudModels:
                     }
                 },
                 max_output_tokens=12000,
+                **(
+                    {"reasoning": {"effort": "low"}}
+                    if stage in {"face_grouping", "face_grounding"}
+                    else {}
+                ),
             )
             try:
                 return schema.model_validate_json(text)

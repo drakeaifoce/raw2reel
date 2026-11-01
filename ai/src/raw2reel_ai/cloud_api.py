@@ -10,7 +10,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
-from .artifacts import MAX_ARTIFACT
+from .analysis import MAX_ANALYSIS_BYTES, PreparedAnalysis
 from .media import MediaError
 from .meta import MetaError
 
@@ -20,10 +20,9 @@ def _schema(render):
     if render:
         properties.update(
             {
-                "artifact": {
+                "analysis": {
                     "type": "string",
-                    "format": "binary",
-                    "description": "ZIP from /v2/prepare",
+                    "description": "JSON response from /v2/prepare, serialized unchanged",
                 },
                 "music": {"type": "string", "format": "binary"},
                 "person_ids": {
@@ -41,7 +40,7 @@ def _schema(render):
                 "multipart/form-data": {
                     "schema": {
                         "type": "object",
-                        "required": ["video", "artifact", "person_ids"] if render else ["video"],
+                        "required": ["video", "analysis", "person_ids"] if render else ["video"],
                         "properties": properties,
                     }
                 }
@@ -60,7 +59,10 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
         try:
             received = 0
             maximum = (
-                settings.max_upload_bytes + settings.max_music_bytes + MAX_ARTIFACT + 1024 * 1024
+                settings.max_upload_bytes
+                + settings.max_music_bytes
+                + MAX_ANALYSIS_BYTES
+                + 1024 * 1024
             )
             receive = request.receive
 
@@ -75,9 +77,11 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
             request = Request(request.scope, bounded)
             work = tempfile.TemporaryDirectory(prefix="raw2reel-v2-")
             directory = Path(work.name)
-            async with request.form(max_files=3, max_fields=3, max_part_size=4096) as form:
+            async with request.form(
+                max_files=2, max_fields=4, max_part_size=MAX_ANALYSIS_BYTES
+            ) as form:
                 allowed = (
-                    {"video", "artifact", "music", "duration", "person_ids", "captions"}
+                    {"video", "analysis", "music", "duration", "person_ids", "captions"}
                     if render
                     else {"video"}
                 )
@@ -103,11 +107,16 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
                     return path
 
                 source = await save("video", settings.max_upload_bytes)
-                artifact = music = None
+                analysis = music = None
                 if render:
-                    artifact = await save("artifact", MAX_ARTIFACT)
                     music = await save("music", settings.max_music_bytes, required=False)
                     try:
+                        raw_analysis = form.get("analysis")
+                        if not isinstance(raw_analysis, str):
+                            raise ValueError
+                        analysis = json.loads(raw_analysis)
+                        if not isinstance(analysis, dict):
+                            raise ValueError
                         ids = json.loads(str(form.get("person_ids", "[]")))
                         duration = float(str(form.get("duration", "27")))
                         captions = str(form.get("captions", "true")).lower()
@@ -122,9 +131,9 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
                             raise ValueError
                     except (ValueError, TypeError):
                         raise HTTPException(
-                            422, "Invalid person_ids, duration or captions."
+                            422, "Invalid analysis JSON, person_ids, duration or captions."
                         ) from None
-                output = directory / ("reel.mp4" if render else "prepared.zip")
+                output = directory / ("reel.mp4" if render else "prepared.json")
 
                 def generate():
                     with pipeline_factory(settings) as pipeline:
@@ -132,20 +141,23 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
                             pipeline.render(
                                 source,
                                 output,
-                                artifact=artifact,
+                                analysis=analysis,
                                 person_ids=ids,
                                 music=music,
                                 duration=duration,
                                 captions=captions == "true",
                             )
                         else:
-                            pipeline.prepare(source, output)
+                            return pipeline.prepare(source, output)
+                    return None
 
-                await run_in_threadpool(generate)
+                result = await run_in_threadpool(generate)
+            if not render:
+                return JSONResponse(result)
             response = FileResponse(
                 output,
                 filename=output.name,
-                media_type="video/mp4" if render else "application/zip",
+                media_type="video/mp4",
                 background=BackgroundTask(work.cleanup),
             )
             work = None
@@ -157,12 +169,16 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
         except MetaError as error:
             return JSONResponse(
                 {"error": {"code": error.code, "message": str(error)}},
-                status_code=503 if error.code == "model_unconfigured" else 502,
+                status_code=(
+                    503
+                    if error.code == "model_unconfigured"
+                    else 422
+                    if error.code == "face_catalog_limit"
+                    else 502
+                ),
             )
         except (ValueError, OSError, KeyError):
-            raise HTTPException(
-                422, "Invalid source, preparation artifact or render options."
-            ) from None
+            raise HTTPException(422, "Invalid source, analysis JSON or render options.") from None
         finally:
             if work is not None:
                 work.cleanup()
@@ -172,11 +188,10 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
         "/v2/prepare",
         dependencies=[Depends(authenticate)],
         openapi_extra=_schema(False),
-        response_class=FileResponse,
-        responses={200: {"content": {"application/zip": {}}}},
+        response_model=PreparedAnalysis,
     )
     async def prepare(request: Request):
-        """Discover anonymous characters and return a portable catalog with JPEG thumbnails."""
+        """Return JSON catalog, transcript and JPEG thumbnails as data URLs."""
         return await handle(request, False)
 
     @app.post(

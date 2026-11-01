@@ -1,6 +1,6 @@
 import pytest
 
-from raw2reel_ai.artifacts import read_artifact
+from raw2reel_ai.analysis import read_analysis
 from raw2reel_ai.cloud_models import EditPlan, Grouping, SamBox, Selection
 from raw2reel_ai.cloud_pipeline import CloudPipeline
 from raw2reel_ai.config import Settings
@@ -31,7 +31,7 @@ class FakeCloud:
         ]
 
     def structured(self, schema, prompt, **kwargs):
-        self.calls.append(kwargs.get("stage"))
+        self.calls.append({"stage": kwargs.get("stage")})
         if schema is Grouping:
             return Grouping(
                 assignments=[
@@ -77,15 +77,15 @@ def test_prepare_render_reuses_transcript_and_remaps_reordered_clips(tmp_path):
     )
     meta, cloud = FakeMeta(), FakeCloud()
     pipeline = CloudPipeline(settings, meta=meta, cloud=cloud)
-    artifact = tmp_path / "prepared.zip"
+    artifact = tmp_path / "prepared.json"
     pipeline.prepare(source, artifact)
-    catalog, images = read_artifact(artifact)
+    catalog, images = read_analysis(artifact)
     assert len(catalog.people) == 1 and len(images) == 2
     assert meta.transcriptions == 1
     manifest = pipeline.render(
         source,
         tmp_path / "result.mp4",
-        artifact=artifact,
+        analysis=artifact,
         person_ids=["p1"],
         duration=2,
         captions=False,
@@ -102,7 +102,7 @@ def test_prepare_render_reuses_transcript_and_remaps_reordered_clips(tmp_path):
     changed.write_bytes(source.read_bytes() + b"changed")
     with pytest.raises(ValueError, match="does not match"):
         pipeline.render(
-            changed, tmp_path / "invalid.mp4", artifact=artifact, person_ids=["p1"], duration=2
+            changed, tmp_path / "invalid.mp4", analysis=artifact, person_ids=["p1"], duration=2
         )
 
 
@@ -165,12 +165,12 @@ def test_review_budget_counts_cfr_rounding(tmp_path):
         str(source),
     )
     pipeline = CloudPipeline(settings, meta=FakeMeta(), cloud=BudgetCloud())
-    artifact = tmp_path / "prepared.zip"
+    artifact = tmp_path / "prepared.json"
     pipeline.prepare(source, artifact)
     result = pipeline.render(
         source,
         tmp_path / "result.mp4",
-        artifact=artifact,
+        analysis=artifact,
         person_ids=["p1"],
         duration=2,
         captions=False,
@@ -209,3 +209,47 @@ def test_vfr_clip_keeps_source_time_offset(tmp_path):
         red, _, blue = image.getpixel((image.width // 2, image.height // 2))
     assert blue > red * 2
     assert tools.probe(clip)["duration"] == pytest.approx(1, abs=0.21)
+
+
+def test_grouping_limit_reports_actual_reason_without_cloud_calls(tmp_path, monkeypatch):
+    import io
+    import json
+
+    from PIL import Image
+
+    from raw2reel_ai.cloud_models import Interval
+    from raw2reel_ai.meta import MetaError
+
+    class DistinctPeople(FakeCloud):
+        def sam(self, media, prompt):
+            return [SamBox(frame=0, object_id=i, bbox=[0.1, 0.1, 0.5, 0.5]) for i in range(3)]
+
+        def structured(self, schema, prompt, **kwargs):
+            entries = json.loads(prompt.split("Image order: ", 1)[1])
+            return Grouping(
+                assignments=[
+                    {
+                        "observation_id": item["new_observation_id"],
+                        "person_id": "p" + item["new_observation_id"][1:],
+                        "label": "Character",
+                    }
+                    for item in entries
+                    if "new_observation_id" in item
+                ]
+            )
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    pipeline = CloudPipeline(Settings(_env_file=None), meta=FakeMeta(), cloud=DistinctPeople())
+    monkeypatch.setattr(
+        pipeline, "source", lambda _: (source, {"duration": 48, "has_audio": False})
+    )
+    monkeypatch.setattr(
+        pipeline.media, "scenes", lambda *_: [Interval(start=i, end=i + 1) for i in range(48)]
+    )
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 16)).save(buffer, format="JPEG")
+    monkeypatch.setattr(pipeline.media, "frame", lambda *_: buffer.getvalue())
+    with pytest.raises(MetaError, match="64") as error:
+        pipeline.prepare(source, tmp_path / "prepared.json")
+    assert error.value.code == "face_catalog_limit"

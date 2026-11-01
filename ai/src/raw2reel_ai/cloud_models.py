@@ -34,7 +34,6 @@ class Observation(Box):
     id: str = Field(pattern=r"^o[0-9]+$")
     scene: int = Field(ge=0)
     time: float = Field(ge=0)
-    image: str = Field(pattern=r"^faces/o[0-9]+\.jpg$")
 
 
 class Person(StrictModel):
@@ -100,8 +99,6 @@ class Catalog(StrictModel):
             scene = self.scenes[o.scene]
             if not scene.start <= o.time < scene.end:
                 raise ValueError("Observation outside scene")
-            if o.image != f"faces/{o.id}.jpg":
-                raise ValueError("Invalid thumbnail reference")
         if any(t.endMs > self.source_duration * 1000 + 100 for t in self.turns):
             raise ValueError("Transcript outside source")
         return self

@@ -3,14 +3,14 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Build cloud-only discovery, selected-person tracking, budgeted Spark planning and reframed two-phase reel rendering.
-**Architecture:** Independent v2 prepare ZIP and render operations, sharing existing MediaTools and MetaClient. Backend/Frontend remain unchanged; v1 contract preserved.
+**Architecture:** Independent v2 prepare JSON and render operations, sharing existing MediaTools and MetaClient. Backend/Frontend remain unchanged; v1 contract preserved.
 **Tech Stack:** Python, FastAPI, Pydantic, httpx, Pillow, FFmpeg; no new neural runtime dependencies.
 **Spec:** docs/superpowers/specs/2026-11-01-cloud-edit-pipeline-design.md
 
 ## Global Constraints
 
 - All inference uses cloud Meta API; never install neural model weights.
-- Bound discovery calls, video seconds reviewed, uploads and ZIP extraction.
+- Bound discovery calls, video seconds reviewed, uploads and JSON payload sizes.
 - Persist anonymous IDs and exact source/clip/output coordinate mappings.
 - Existing /v1/render and CLI commands continue to work.
 
@@ -18,7 +18,7 @@
 
 - Scene changes and VFR must not shift source coordinates or reassign SAM IDs.
 - Uncertain discovery/tracking must not become proven absence.
-- Artifact tampering, mismatched source and malicious ZIPs must be rejected.
+- Analysis tampering, mismatched source and invalid thumbnails must be rejected.
 - Reordered cuts must remap subtitles, tracking and impact time consistently.
 - Lost targets/multiple targets require deterministic, documented crop fallback.
 
@@ -30,9 +30,9 @@
 
 ### Task 2: Preparation artifacts
 - [x] Add `cloud_media.py` for scene sampling, CFR analysis clips, timestamps and frames.
-- [x] Add `cloud_pipeline.py`: prepare(source, artifact_path), observations and reference thumbnails, transcription cache.
-- [x] Add `artifacts.py`: bounded ZIP read/write with allowlisted filenames and fingerprint validation, no extractall.
-- [x] Tests: archive traversal/bomb, unknown observations, source mismatch and retained transcript.
+- [x] Add `cloud_pipeline.py`: prepare(source, analysis_path), observations and reference thumbnails, transcription cache.
+- [x] Add `analysis.py`: bounded JSON payload with data-URL thumbnails, schema and fingerprint validation.
+- [x] Tests: malformed JSON and invalid JPEG/base64, unknown observations, source mismatch and retained transcript.
 
 ### Task 3: Planning and rendering
 - [x] Implement selected-seed per-shot SAM tracking, text preselection and video review within budget.
@@ -52,7 +52,7 @@
 - Work remains in existing feature branch, no backend/frontend edits or push.
 
 - Task 1: complete. Real SAM image face localization and Spark anonymous grouping succeeded; no new neural dependencies.
-- Task 2: complete. Portable validated ZIP catalog, thumbnails and reusable transcript implemented.
+- Task 2: complete. Portable validated JSON catalog, thumbnails and reusable transcript implemented.
 - Task 3: complete. SAM per-scene tracking, budgeted two-pass Spark, timed plan, crop and audio implemented.
 - Task 4: complete. CLI/Swagger v2, documentation, existing v1 compatibility tested; frontend/backend unchanged.
 - Ruling: use documented non-streaming SAM responses on short bounded CFR clips — simpler bounded parsing; media output stored only transiently.
@@ -64,3 +64,8 @@
 - No commits, pushes, deploy or backend/frontend changes performed.
 
 - Final verification: 53 pytest tests passed with local FFmpeg/ffprobe; Ruff check and format check clean; git diff --check clean. No deferred review findings.
+
+- User requested JSON-only transfer: removed packaging module, prepare returns catalog/thumbnails/calls, render accepts analysis JSON field; CLI uses prepared.json and --analysis.
+- Debug investigation: full input reached grouping but cloud response did not finish. Prior invalid_input cause cannot be recovered from its discarded exception. Added safe model status/token-limit diagnostics and --debug; grouping uses four observations per batch and explicit low reasoning.
+
+- JSON-only verification: 58 tests passed; Ruff check/format and diff whitespace checks clean. Fresh review found no substantive JSON-contract issue. Real short prepare returned catalog/thumbnails/calls with two characters and three valid JPEGs. Full input after grouping changes was not rerun; original invalid_input root cause remains unconfirmed.
