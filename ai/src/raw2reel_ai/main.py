@@ -15,6 +15,8 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
+from .cloud_api import install_cloud_routes
+from .cloud_pipeline import CloudPipeline
 from .config import Settings, get_settings
 from .health import readiness
 from .media import MediaError
@@ -23,7 +25,12 @@ from .models import RenderRequest
 from .pipeline import ReelPipeline
 
 
-def create_app(service_settings: Settings | None = None, *, pipeline_factory=ReelPipeline):
+def create_app(
+    service_settings: Settings | None = None,
+    *,
+    pipeline_factory=ReelPipeline,
+    cloud_pipeline_factory=CloudPipeline,
+):
     settings = service_settings or get_settings()
     app = FastAPI(title="raw2reel-ai", version="0.0.0")
     render_lock = threading.Lock()
@@ -201,6 +208,7 @@ def create_app(service_settings: Settings | None = None, *, pipeline_factory=Ree
                 work.cleanup()
             render_lock.release()
 
+    install_cloud_routes(app, settings, authenticate, render_lock, cloud_pipeline_factory)
     return app
 
 

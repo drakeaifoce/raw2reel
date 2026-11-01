@@ -489,3 +489,44 @@ def test_quiet_foreground_stays_above_hot_music_and_music_ducks(tmp_path, tools)
     music_in_pause = amplitude_at(880, 0.2, 0.7)
     assert 20 * math.log10(foreground / music_during_voice) >= 10
     assert 20 * math.log10(music_in_pause / music_during_voice) >= 5
+
+
+def test_cloud_portrait_and_two_phase_mix(tmp_path, tools, video):
+    from raw2reel_ai.models import Segment
+    from raw2reel_ai.reframing import portrait_filter
+
+    music = tmp_path / "music.wav"
+    tools.ffmpeg("-f", "lavfi", "-i", "sine=frequency=880:duration=3", str(music))
+    segment = Segment(start=0, end=2, reason="test", subject_ids=["p1"])
+    rendered, info = tools.render(
+        video,
+        [segment],
+        tmp_path,
+        "",
+        True,
+        music,
+        portrait_filters=[portrait_filter(segment, [], ["p1"])],
+        impact_start=1,
+        music_start=0.1,
+    )
+    assert rendered.is_file()
+    assert info["width"] == 720 and info["height"] == 1280
+    assert info["audio_mix"] == "two_phase_dialogue_then_music"
+    # Check audible behavior, not just the chosen filter label: music/voice ratio rises.
+    import math
+
+    audio = tmp_path / "mixed.wav"
+    tools.extract_audio(rendered, audio)
+    with wave.open(str(audio)) as wav:
+        samples = __import__("array").array("h", wav.readframes(wav.getnframes()))
+        rate = wav.getframerate()
+
+    def amplitude(start, frequency):
+        values = samples[int(start * rate) : int((start + 0.2) * rate)]
+        cosine = sum(v * math.cos(2 * math.pi * frequency * i / rate) for i, v in enumerate(values))
+        sine = sum(v * math.sin(2 * math.pi * frequency * i / rate) for i, v in enumerate(values))
+        return math.hypot(cosine, sine)
+
+    before = amplitude(0.3, 880) / max(1, amplitude(0.3, 440))
+    after = amplitude(1.6, 880) / max(1, amplitude(1.6, 440))
+    assert after > before * 3

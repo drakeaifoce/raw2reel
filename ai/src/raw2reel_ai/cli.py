@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .cloud_pipeline import CloudPipeline
 from .config import Settings
 from .media import MediaError
 from .meta import MetaError
@@ -41,15 +42,45 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("--transcript", type=Path, help="JSON file containing timed Voice turns")
     render.add_argument("--no-captions", action="store_true")
     render.add_argument("--overwrite", action="store_true")
+    prepare = commands.add_parser("prepare", help="Discover faces; save catalog and JPEGs as ZIP")
+    prepare.add_argument("video", type=Path)
+    prepare.add_argument("--output", "-o", type=Path, required=True)
+    prepare.add_argument("--overwrite", action="store_true")
+    cloud_render = commands.add_parser("render-v2", help="Track selected people and render an edit")
+    cloud_render.add_argument("video", type=Path)
+    cloud_render.add_argument("--artifact", type=Path, required=True)
+    cloud_render.add_argument("--person", action="append", required=True)
+    cloud_render.add_argument("--music", type=Path)
+    cloud_render.add_argument("--duration", type=float, default=27)
+    cloud_render.add_argument("--output", "-o", type=Path, required=True)
+    cloud_render.add_argument("--no-captions", action="store_true")
+    cloud_render.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
     try:
         settings = Settings(_env_file=args.env_file)
-        with ReelPipeline(settings) as pipeline:
+        factory = CloudPipeline if args.command in {"prepare", "render-v2"} else ReelPipeline
+        with factory(settings) as pipeline:
 
             def progress(stage: str):
                 print(stage, file=sys.stderr, flush=True)
 
-            if args.command == "analyze":
+            if args.command == "prepare":
+                result = pipeline.prepare(
+                    args.video, args.output, overwrite=args.overwrite, on_progress=progress
+                )
+            elif args.command == "render-v2":
+                result = pipeline.render(
+                    args.video,
+                    args.output,
+                    artifact=args.artifact,
+                    person_ids=args.person,
+                    music=args.music,
+                    duration=args.duration,
+                    captions=not args.no_captions,
+                    overwrite=args.overwrite,
+                    on_progress=progress,
+                )
+            elif args.command == "analyze":
                 result = pipeline.analyze(
                     args.video,
                     args.output,
