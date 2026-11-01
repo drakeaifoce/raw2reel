@@ -5,9 +5,11 @@ import json
 import tempfile
 import threading
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -27,6 +29,23 @@ def create_app(
     settings = service_settings or get_settings()
     app = FastAPI(title="raw2reel-ai", version="0.0.0")
     render_lock = threading.Lock()
+    bearer = HTTPBearer(
+        scheme_name="AIServiceToken",
+        description="AI_SERVICE_TOKEN from the AI service environment (not MODEL_API_KEY).",
+        auto_error=False,
+    )
+
+    def authenticate(
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    ):
+        token = settings.ai_service_token
+        if not token or not token.get_secret_value():
+            raise HTTPException(503, "Set AI_SERVICE_TOKEN on the AI service.")
+        supplied = credentials.credentials if credentials else ""
+        if not hmac.compare_digest(
+            supplied.encode(), token.get_secret_value().encode()
+        ):
+            raise HTTPException(401, "Invalid AI service token.")
 
     @app.get("/health")
     def health():
@@ -54,18 +73,41 @@ def create_app(
     @app.post(
         "/v1/render",
         response_class=FileResponse,
+        dependencies=[Depends(authenticate)],
         responses={200: {"content": {"video/mp4": {}}}},
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["video"],
+                            "properties": {
+                                "video": {"type": "string", "format": "binary"},
+                                "music": {"type": "string", "format": "binary"},
+                                "duration": {
+                                    "type": "number",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 30,
+                                    "default": 27,
+                                    "description": "Result duration in seconds",
+                                },
+                                "captions": {"type": "boolean", "default": True},
+                                "subject_ids": {
+                                    "type": "string",
+                                    "default": "[]",
+                                    "description": "Subject IDs as JSON; default []",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
     )
     async def render(request: Request):
         """Multipart: video, optional music, duration (0..30), captions, subject_ids JSON."""
-        token = settings.ai_service_token
-        if not token or not token.get_secret_value():
-            raise HTTPException(503, "Set AI_SERVICE_TOKEN on the AI service.")
-        expected = f"Bearer {token.get_secret_value()}".encode()
-        if not hmac.compare_digest(
-            request.headers.get("authorization", "").encode(), expected
-        ):
-            raise HTTPException(401, "Invalid AI service token.")
         if not render_lock.acquire(blocking=False):
             raise HTTPException(
                 429,

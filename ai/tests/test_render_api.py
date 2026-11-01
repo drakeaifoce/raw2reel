@@ -1,6 +1,7 @@
 from typing import ClassVar
 
 from fastapi.testclient import TestClient
+
 from raw2reel_ai.config import Settings
 from raw2reel_ai.main import create_app
 from raw2reel_ai.media import MediaError
@@ -144,3 +145,21 @@ def test_request_body_limit_without_content_length():
         content=iter([b"--x\r\n" + b"a" * (1024 * 1024 + 10)]),
     )
     assert response.status_code == 413
+
+
+def test_swagger_documents_service_bearer_token():
+    schema = client().get("/openapi.json").json()
+    security = schema["paths"]["/v1/render"]["post"]["security"]
+    assert security == [{"AIServiceToken": []}]
+    assert schema["components"]["securitySchemes"]["AIServiceToken"]["scheme"] == "bearer"
+    assert "security" not in schema["paths"]["/health"]["get"]
+
+
+def test_swagger_documents_upload_fields():
+    operation = client().get("/openapi.json").json()["paths"]["/v1/render"]["post"]
+    schema = operation["requestBody"]["content"]["multipart/form-data"]["schema"]
+    assert schema["required"] == ["video"]
+    assert schema["properties"]["video"]["format"] == "binary"
+    assert schema["properties"]["music"]["format"] == "binary"
+    assert schema["properties"]["duration"]["default"] == 27
+    assert schema["properties"]["captions"]["default"] is True
