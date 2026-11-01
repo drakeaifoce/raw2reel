@@ -218,12 +218,23 @@ class MediaTools:
         srt: str,
         has_audio: bool,
         music: Path | None,
+        *,
+        portrait_filters: list[str] | None = None,
+        impact_start: float | None = None,
+        music_start: float = 0,
     ) -> tuple[Path, dict]:
         outputs = []
         portrait = (
             "scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,"
             "pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
         )
+        if portrait_filters is not None and len(portrait_filters) != len(segments):
+            raise ValueError("One portrait filter is required per segment")
+        if not math.isfinite(music_start) or music_start < 0:
+            raise ValueError("Invalid music offset")
+        total_duration = sum(s.end - s.start for s in segments)
+        if impact_start is not None and not 0 <= impact_start < total_duration:
+            raise ValueError("Invalid impact time")
         for index, segment in enumerate(segments):
             clip = directory / f"cut-{index}.mov"
             clip_duration = segment.end - segment.start
@@ -252,7 +263,8 @@ class MediaTools:
                 "-map",
                 "[audio]" if has_audio else "1:a:0",
                 "-vf",
-                "setpts=PTS-STARTPTS," + portrait,
+                "setpts=PTS-STARTPTS,"
+                + (portrait_filters[index] if portrait_filters is not None else portrait),
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -286,21 +298,36 @@ class MediaTools:
         duration = sum(s.end - s.start for s in segments)
         args = ["-i", str(joined)]
         if music:
-            args += [
-                "-stream_loop",
-                "-1",
-                "-i",
-                str(music),
-                "-filter_complex",
-                # Match loudness before mixing: a fixed percentage cannot balance
-                # quiet dialogue against a heavily mastered music track.
+            mix = (
                 "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
                 "asplit=2[voice][sidechain];"
                 "[1:a]loudnorm=I=-20:TP=-2:LRA=11,aresample=48000[music];"
                 "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
                 "attack=15:release=450[ducked];"
                 "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
-                "alimiter=limit=0.89125:level=false:latency=true[a]",
+                "alimiter=limit=0.89125:level=false:latency=true[a]"
+            )
+            if impact_start is not None:
+                transition = f"clip((t-{impact_start:.6f}+0.25)/0.5,0,1)"
+                mix = (
+                    "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
+                    f"volume='1-0.82*({transition})':eval=frame,asplit=2[voice][sidechain];"
+                    "[1:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
+                    f"volume='0.25+0.75*({transition})':eval=frame[music];"
+                    "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
+                    "attack=15:release=450[ducked];"
+                    "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
+                    "alimiter=limit=0.89125:level=false:latency=true[a]"
+                )
+            args += [
+                "-stream_loop",
+                "-1",
+                "-ss",
+                str(music_start),
+                "-i",
+                str(music),
+                "-filter_complex",
+                mix,
                 "-map",
                 "0:v:0",
                 "-map",
@@ -335,7 +362,13 @@ class MediaTools:
         ]
         self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
-        info["audio_mix"] = "normalized_foreground_with_ducked_music" if music else "original"
+        info["audio_mix"] = (
+            "two_phase_dialogue_then_music"
+            if music and impact_start is not None
+            else "normalized_foreground_with_ducked_music"
+            if music
+            else "original"
+        )
         if (
             info["width"] != 720
             or info["height"] != 1280
