@@ -21,6 +21,8 @@ def tool_path(name: str) -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore", env_file=".env")
 
+    ai_service_token: SecretStr | None = None
+
     port: int = 8000
 
     # Подставляется при сборке образа через --build-arg GIT_SHA, поэтому не может
