@@ -24,6 +24,17 @@ export type GuestAuthSession = {
   sessionToken: string
   sessionCookie: string
 }
+/**
+ * Исход попытки создать гостя. Размеченный тип нужен, чтобы отказ лимитера не
+ * сливался с прочими сбоями: раньше createGuest возвращал null на любой
+ * не-ok, и app.ts отдавал 503 DEPENDENCY_UNAVAILABLE вместо 429. Из-за этого
+ * жалобу «сайт не пускает» нельзя было отличить от сломанной зависимости.
+ */
+export type GuestAuthAttempt =
+  | { status: 'created'; session: GuestAuthSession }
+  | { status: 'rate-limited'; retryAfterSeconds: number }
+  | { status: 'failed' }
+
 export type RegisteredAuthSession = {
   user: AuthenticatedUser & { isAnonymous: false }
   sessionToken: string
@@ -33,7 +44,7 @@ export type RegisteredAuthSession = {
 export interface AuthService {
   handler(request: Request): Promise<Response>
   getSession(headers: Headers): Promise<AuthSession | null>
-  createGuest?(headers: Headers): Promise<GuestAuthSession | null>
+  createGuest?(headers: Headers): Promise<GuestAuthAttempt>
   signInEmail?(
     headers: Headers,
     input: { email: string; password: string },
@@ -138,11 +149,13 @@ const identityError = (code: string, status: number) =>
         message:
           code === 'INVALID_REQUEST'
             ? 'invalid request'
-            : code === 'ORIGIN_REJECTED'
-              ? 'origin rejected'
-              : code === 'CSRF_REJECTED'
-                ? 'csrf rejected'
-                : 'invalid credential',
+            : code === 'RATE_LIMITED'
+              ? 'too many requests'
+              : code === 'ORIGIN_REJECTED'
+                ? 'origin rejected'
+                : code === 'CSRF_REJECTED'
+                  ? 'csrf rejected'
+                  : 'invalid credential',
       },
     },
     status,
@@ -371,10 +384,16 @@ export async function handle(
     if (!dependencies.auth.createGuest) {
       return error('guest authentication is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
     }
-    const guest = await dependencies.auth.createGuest(request.headers)
-    if (!guest?.user.isAnonymous) {
+    const attempt = await dependencies.auth.createGuest(request.headers)
+    if (attempt.status === 'rate-limited') {
+      const response = identityError('RATE_LIMITED', 429)
+      response.headers.set('retry-after', String(attempt.retryAfterSeconds))
+      return response
+    }
+    if (attempt.status !== 'created' || !attempt.session.user.isAnonymous) {
       return error('guest session could not be created', 'DEPENDENCY_UNAVAILABLE', 503)
     }
+    const guest = attempt.session
     const pair = await dependencies.identity!.registerGuest(guest.user.id, guest.sessionToken)
     if (!isWeb) return json(pair, 201)
 

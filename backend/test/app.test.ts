@@ -194,10 +194,52 @@ describe('/identity guest entry', () => {
     getSession: async () =>
       existing ? { user: { id: 'existing-guest', isAnonymous: true } } : null,
     createGuest: async () => ({
-      user: { id: 'guest-issued', isAnonymous: true as const },
-      sessionToken: 'better-auth-session-secret',
-      sessionCookie: 'better-auth.session_token=opaque; HttpOnly; SameSite=Lax; Path=/',
+      status: 'created' as const,
+      session: {
+        user: { id: 'guest-issued', isAnonymous: true as const },
+        sessionToken: 'better-auth-session-secret',
+        sessionCookie: 'better-auth.session_token=opaque; HttpOnly; SameSite=Lax; Path=/',
+      },
     }),
+  })
+
+  test('reports a throttled guest entry as 429 with Retry-After, not as a dependency failure', async () => {
+    const throttled = {
+      handler: async () => new Response('unused'),
+      getSession: async () => null,
+      createGuest: async () => ({ status: 'rate-limited' as const, retryAfterSeconds: 42 }),
+    }
+    const response = await handle(
+      new Request('http://localhost/identity/api/guest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth: throttled, identity: new IdentityService(new MemoryIdentityStore()) },
+    )
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe('42')
+    expect(await response.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } })
+  })
+
+  test('still reports a genuine guest failure as a dependency problem', async () => {
+    const broken = {
+      handler: async () => new Response('unused'),
+      getSession: async () => null,
+      createGuest: async () => ({ status: 'failed' as const }),
+    }
+    const response = await handle(
+      new Request('http://localhost/identity/api/guest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      { auth: broken, identity: new IdentityService(new MemoryIdentityStore()) },
+    )
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('retry-after')).toBeNull()
   })
 
   test('issues an API pair from a server-created anonymous Better Auth session', async () => {

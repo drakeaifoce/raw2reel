@@ -203,8 +203,12 @@ describe('Better Auth lifecycle', () => {
     const db: MemoryDB = { user: [], session: [], account: [], verification: [], rateLimit: [] }
     const auth = createAuthServiceWithDatabase(memoryAdapter(db), config)
 
-    const issued = await auth.createGuest?.(new Headers({ origin, 'x-forwarded-for': '192.0.2.1' }))
+    const attempt = await auth.createGuest?.(
+      new Headers({ origin, 'x-forwarded-for': '192.0.2.1' }),
+    )
 
+    expect(attempt).toMatchObject({ status: 'created' })
+    const issued = attempt?.status === 'created' ? attempt.session : undefined
     expect(issued).toMatchObject({ user: { isAnonymous: true } })
     expect(issued?.sessionToken).toBeString()
     expect(

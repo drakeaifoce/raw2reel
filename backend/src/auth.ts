@@ -86,7 +86,7 @@ export function createAuthServiceWithDatabase(
         // здесь минутное, а не как у входа по почте. С прежними 5 на 15 минут
         // пользователь выключал себе сайт пятью перезагрузками страницы, причём
         // отказ доходил до браузера как 503, а не как 429.
-        '/sign-in/anonymous': { window: 60, max: 5 },
+        '/sign-in/anonymous': { window: 60, max: 20 },
       },
     },
   })
@@ -120,7 +120,17 @@ export function createAuthServiceWithDatabase(
           body: '{}',
         }),
       )
-      if (!response.ok) return null
+      // Отказ лимитера отличаем от прочих сбоев: иначе он доходит до клиента
+      // как 503 «недоступная зависимость», и понять, что надо просто подождать,
+      // невозможно ни пользователю, ни тому, кто разбирает жалобу.
+      if (response.status === 429) {
+        const header = Number(response.headers.get('retry-after'))
+        return {
+          status: 'rate-limited',
+          retryAfterSeconds: Number.isFinite(header) && header > 0 ? header : 60,
+        }
+      }
+      if (!response.ok) return { status: 'failed' }
       const body = (await response.json()) as {
         token?: unknown
         user?: { id?: unknown; isAnonymous?: unknown; registrationOperationId?: unknown }
@@ -132,12 +142,15 @@ export function createAuthServiceWithDatabase(
         body.user.isAnonymous !== true ||
         !sessionCookie
       ) {
-        return null
+        return { status: 'failed' }
       }
       return {
-        user: { id: body.user.id, isAnonymous: true },
-        sessionToken: body.token,
-        sessionCookie,
+        status: 'created',
+        session: {
+          user: { id: body.user.id, isAnonymous: true },
+          sessionToken: body.token,
+          sessionCookie,
+        },
       }
     },
     signInEmail: async (headers, input) => {
@@ -177,6 +190,13 @@ export function createAuthServiceWithDatabase(
       }
     },
     signUpEmail: async (input) => {
+      // ИЗВЕСТНОЕ СЛЕДСТВИЕ: клиентские заголовки сюда не доходят, потому что
+      // RegistrationService зовёт signUpEmail без них. Без X-Forwarded-For
+      // лимитер не определяет адрес и складывает ВСЕ регистрации в один
+      // счётчик `no-trusted-ip` — десять на 15 минут на весь мир. Такой ключ
+      // наблюдался в базе 01.11.2026. Починка требует протащить заголовки
+      // через RegistrationService.register и acceptRegistration — отдельная
+      // правка, здесь не делается.
       const response = await auth.handler(
         new Request(new URL('/api/auth/sign-up/email', baseUrl.origin).toString(), {
           method: 'POST',

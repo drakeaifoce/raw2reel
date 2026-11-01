@@ -34,6 +34,7 @@ const identityErrors = {
   '401': response('INVALID_CREDENTIAL', ref('IdentityError')),
   '403': response('ORIGIN_REJECTED or CSRF_REJECTED', ref('IdentityError')),
   '409': response('SESSION_EXISTS or ACCOUNT_TRANSITION', ref('IdentityError')),
+  '429': response('RATE_LIMITED; carries Retry-After in seconds', ref('IdentityError')),
   '503': response('Dependency unavailable', ref('Error')),
   default: response(
     'Unhandled dependency or registration failure; body is not a stable JSON contract',
