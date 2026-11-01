@@ -8,7 +8,7 @@ import { createAiClient } from './ai-client'
 import { config } from './config'
 import { createMediaService } from './media'
 import type { QueueOutcome } from './queue'
-import { createRenderQueue } from './queue'
+import { MAX_DELIVERIES, createRenderQueue } from './queue'
 import { createRenderJobService } from './render-jobs'
 
 const media = createMediaService(config)
@@ -70,14 +70,18 @@ const handle = async (jobId: string): Promise<QueueOutcome> => {
     captions: job.captions,
   })
 
-  if (outcome.status === 'busy') {
+  if (outcome.status === 'busy' || outcome.status === 'unavailable') {
+    const reason = outcome.status === 'busy' ? 'AI-сервис занят другим рендером' : outcome.detail
+    // Попытки кончились: сдаёмся явно. Иначе очередь просто перестанет
+    // доставлять, а задача навсегда останется в queued и будет выглядеть как
+    // ожидающая своей очереди.
+    if (job.attempts >= MAX_DELIVERIES) {
+      await jobs!.fail(jobId, `исчерпаны попытки (${job.attempts}): ${reason}`)
+      console.error(`задача ${jobId}: исчерпаны попытки — ${reason}`)
+      return 'failed'
+    }
     await jobs!.requeue(jobId)
-    console.log(`задача ${jobId}: AI-сервис занят, вернул в очередь`)
-    return 'retry-later'
-  }
-  if (outcome.status === 'unavailable') {
-    await jobs!.requeue(jobId)
-    console.warn(`задача ${jobId}: AI-сервис недоступен — ${outcome.detail}`)
+    console.warn(`задача ${jobId}: попытка ${job.attempts} не удалась — ${reason}`)
     return 'retry-later'
   }
   if (outcome.status === 'rejected') {

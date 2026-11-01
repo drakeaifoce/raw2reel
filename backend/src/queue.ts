@@ -14,6 +14,17 @@ const STREAM = 'RENDER'
 const SUBJECT = 'render.jobs'
 const DURABLE = 'render-worker'
 
+/**
+ * Сколько раз JetStream доставит задачу, прежде чем перестанет. Воркер обязан
+ * знать это число: исчерпав попытки, очередь молча прекращает доставку, и без
+ * явной сдачи задача навсегда осталась бы в queued, выглядя как ожидающая.
+ * Наступали на это при первом сквозном прогоне.
+ */
+export const MAX_DELIVERIES = 10
+
+/** Пауза перед повторной доставкой. */
+const RETRY_AFTER_MS = 15_000
+
 /** Исход обработки: от него зависит, что сделать с сообщением. */
 export type QueueOutcome =
   /** Готово — подтверждаем, сообщение уходит из очереди. */
@@ -38,16 +49,20 @@ export class NatsRenderQueue implements RenderQueue {
     const jsm = await nc.jetstreamManager()
     // Идемпотентно: при повторном запуске поток уже есть.
     await jsm.streams.add({ name: STREAM, subjects: [`${SUBJECT}.>`, SUBJECT] }).catch(() => {})
-    await jsm.consumers
-      .add(STREAM, {
-        durable_name: DURABLE,
-        ack_policy: AckPolicy.Explicit,
-        // Четыре повтора: дальше задача помечается провалившейся, чтобы она не
-        // циклилась вечно и пользователь увидел внятный отказ.
-        max_deliver: 5,
-        ack_wait: 15 * 60 * 1_000_000_000,
-      })
-      .catch(() => {})
+    const consumerConfig = {
+      durable_name: DURABLE,
+      ack_policy: AckPolicy.Explicit,
+      max_deliver: MAX_DELIVERIES,
+      // Рендер занимает минуты, поэтому ждать подтверждения надо долго.
+      ack_wait: 15 * 60 * 1_000_000_000,
+    }
+    try {
+      await jsm.consumers.add(STREAM, consumerConfig)
+    } catch {
+      // Получатель уже есть: обновляем, иначе изменения max_deliver и ack_wait
+      // не доехали бы до уже развёрнутой очереди.
+      await jsm.consumers.update(STREAM, DURABLE, consumerConfig).catch(() => {})
+    }
     return new NatsRenderQueue(nc)
   }
 
@@ -72,7 +87,7 @@ export class NatsRenderQueue implements RenderQueue {
           outcome = 'retry-later'
         }
         if (outcome === 'done') message.ack()
-        else if (outcome === 'retry-later') message.nak(10_000)
+        else if (outcome === 'retry-later') message.nak(RETRY_AFTER_MS)
         else message.term()
       }
     }
