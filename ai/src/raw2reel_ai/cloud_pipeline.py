@@ -129,8 +129,15 @@ class CloudPipeline:
                 parts = [images[o.id] for _, o in references] + [images[o.id] for o in batch]
                 prompt = (
                     "Match anonymous characters within this video only, across these face crops. "
-                    "Return one assignment for every new observation. Reuse a reference person ID "
-                    "only if confident; otherwise use a fresh pN ID, including uncertain matches. "
+                    "Return one assignment for every new observation. Group assertively: prefer "
+                    "reusing the best matching existing person ID over creating another character. "
+                    "Changes in head angle, expression, lighting, crop, blur or clothing alone "
+                    "are not evidence of a different person. Compare stable facial structure "
+                    "across all reference images and new observations in this batch. Multiple new "
+                    "observations of the same person must share one ID, even without an existing "
+                    "reference. Create a fresh pN ID only when no plausible reference matches or "
+                    "there is positive visual evidence of a different person. Keep clearly "
+                    "different faces separate; do not merge people merely to reduce the count. "
                     "No names, no demographic labels; neutral labels such as Character 1. "
                     "Image order: "
                     + json.dumps(
@@ -192,7 +199,7 @@ class CloudPipeline:
                     "spark": self.settings.muse_spark_model,
                     "voice": self.settings.muse_voice_model,
                     "schema": "2",
-                    "prompt": "cloud-edit-2",
+                    "prompt": "cloud-edit-3",
                 },
             )
             pending = work / "prepared.json"
