@@ -82,7 +82,11 @@ export function createAuthServiceWithDatabase(
       customRules: {
         '/sign-in/email': { window: 15 * 60, max: 10 },
         '/sign-up/email': { window: 15 * 60, max: 10 },
-        '/sign-in/anonymous': { window: 15 * 60, max: 5 },
+        // Точка входа на сайт: гость создаётся при первом заходе, поэтому окно
+        // здесь минутное, а не как у входа по почте. С прежними 5 на 15 минут
+        // пользователь выключал себе сайт пятью перезагрузками страницы, причём
+        // отказ доходил до браузера как 503, а не как 429.
+        '/sign-in/anonymous': { window: 60, max: 5 },
       },
     },
   })
