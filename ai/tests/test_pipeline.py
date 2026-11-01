@@ -401,3 +401,67 @@ def test_caption_font_uses_output_pixels_and_safe_bottom_margin(tmp_path, tools)
     assert box is not None
     assert 15 <= box[3] - box[1] <= 45
     assert 1150 <= box[3] <= 1220
+
+
+def test_quiet_foreground_stays_above_hot_music_and_music_ducks(tmp_path, tools):
+    import array
+    import math
+
+    from raw2reel_ai.models import Segment
+
+    rate = 24000
+    for name, frequency, amplitude in (("voice", 440, 180), ("music", 880, 16000)):
+        samples = array.array(
+            "h",
+            (
+                int(amplitude * math.sin(2 * math.pi * frequency * i / rate))
+                if name == "music" or rate <= i < 3 * rate
+                else 0
+                for i in range(4 * rate)
+            ),
+        )
+        with wave.open(str(tmp_path / (name + ".wav")), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(samples.tobytes())
+    source = tmp_path / "quiet-video.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:size=320x240:rate=30:duration=4",
+        "-i",
+        str(tmp_path / "voice.wav"),
+        "-c:v",
+        "libx264",
+        "-threads",
+        "1",
+        "-c:a",
+        "aac",
+        str(source),
+    )
+    rendered, _ = tools.render(
+        source,
+        [Segment(start=0, end=4, reason="voice", subject_ids=[])],
+        tmp_path,
+        "",
+        True,
+        tmp_path / "music.wav",
+    )
+    mixed = tmp_path / "mixed.wav"
+    tools.extract_audio(rendered, mixed)
+    with wave.open(str(mixed), "rb") as wav:
+        samples = array.array("h", wav.readframes(wav.getnframes()))
+
+    def amplitude_at(frequency, start, end):
+        window = samples[int(start * rate) : int(end * rate)]
+        cosine = sum(v * math.cos(2 * math.pi * frequency * i / rate) for i, v in enumerate(window))
+        sine = sum(v * math.sin(2 * math.pi * frequency * i / rate) for i, v in enumerate(window))
+        return 2 * math.hypot(cosine, sine) / len(window)
+
+    foreground = amplitude_at(440, 1.6, 2.6)
+    music_during_voice = amplitude_at(880, 1.6, 2.6)
+    music_in_pause = amplitude_at(880, 0.2, 0.7)
+    assert 20 * math.log10(foreground / music_during_voice) >= 10
+    assert 20 * math.log10(music_in_pause / music_during_voice) >= 5

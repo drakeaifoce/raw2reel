@@ -291,7 +291,15 @@ class MediaTools:
                 "-i",
                 str(music),
                 "-filter_complex",
-                "[1:a]volume=0.18[m];[0:a][m]amix=inputs=2:duration=first:normalize=0[a]",
+                # Match loudness before mixing: a fixed percentage cannot balance
+                # quiet dialogue against a heavily mastered music track.
+                "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
+                "asplit=2[voice][sidechain];"
+                "[1:a]loudnorm=I=-20:TP=-2:LRA=11,aresample=48000[music];"
+                "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
+                "attack=15:release=450[ducked];"
+                "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
+                "alimiter=limit=0.89125:level=false:latency=true[a]",
                 "-map",
                 "0:v:0",
                 "-map",
@@ -326,6 +334,7 @@ class MediaTools:
         ]
         self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
+        info["audio_mix"] = "normalized_foreground_with_ducked_music" if music else "original"
         if (
             info["width"] != 720
             or info["height"] != 1280

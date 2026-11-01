@@ -229,6 +229,7 @@ class ReelPipeline:
                 "cuts": len(segments) - 1,
                 "bpm": bpm,
                 "captions": bool(srt),
+                "audio_mix": result["audio_mix"],
                 "subjects_tracked": False,
                 "warnings": warnings,
                 "segments": [s.model_dump() for s in segments],
