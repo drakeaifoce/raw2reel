@@ -131,6 +131,28 @@ describe('render', () => {
     }
   })
 
+  test('model_request терминален, хотя приходит с кодом 502', async () => {
+    // Сервис отдаёт 502 и на «Meta отвергла байты», и на «Meta недоступна».
+    // Различать их можно только по коду в теле, иначе задача десять раз
+    // повторяет заведомо отвергнутый запрос.
+    intercept(
+      new Response(JSON.stringify({ error: { code: 'model_request', message: 'rejected' } }), {
+        status: 502,
+      }),
+    )
+    expect((await client.render({ video: videoSource(), ...input })).status).toBe('rejected')
+
+    intercept(
+      new Response(JSON.stringify({ error: { code: 'model_busy', message: 'later' } }), {
+        status: 502,
+      }),
+    )
+    expect((await client.render({ video: videoSource(), ...input })).status).toBe('unavailable')
+
+    intercept(new Response('шлюз сломался', { status: 502 }))
+    expect((await client.render({ video: videoSource(), ...input })).status).toBe('unavailable')
+  })
+
   test('сетевой сбой не бросает исключение, а возвращает unavailable', async () => {
     globalThis.fetch = (async () => {
       throw new Error('соединение разорвано')

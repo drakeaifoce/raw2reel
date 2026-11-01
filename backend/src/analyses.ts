@@ -56,6 +56,12 @@ export interface AnalysisRepository {
    * платить за повторный прогон моделей на одном и том же видео.
    */
   latestDone(ownerId: string, sourceMediaId: string): Promise<AnalysisRecord | null>
+  /**
+   * Незавершённый разбор того же исходника. Нужен при повторной доставке
+   * цепочечного рендера: без него каждая попытка создавала новый разбор, и
+   * десять попыток оставляли десять брошенных записей.
+   */
+  latestPending(ownerId: string, sourceMediaId: string): Promise<AnalysisRecord | null>
   /** Принимает сырой ответ prepare: раскладывает его по Blob и пишет карточки. */
   finish(id: string, prepared: Uint8Array): Promise<AnalysisRecord>
   fail(id: string, message: string): Promise<void>
@@ -188,6 +194,19 @@ export class AnalysisService implements AnalysisRepository {
     await this.indexesReady
     const [found] = await this.collection
       .find({ ownerId, sourceMediaId, status: 'done' }, { projection: { _id: 0 } })
+      .sort({ createdAt: -1 })
+      .limit(1)
+      .toArray()
+    return found ?? null
+  }
+
+  async latestPending(ownerId: string, sourceMediaId: string): Promise<AnalysisRecord | null> {
+    await this.indexesReady
+    const [found] = await this.collection
+      .find(
+        { ownerId, sourceMediaId, status: { $in: ['queued', 'preparing'] } },
+        { projection: { _id: 0 } },
+      )
       .sort({ createdAt: -1 })
       .limit(1)
       .toArray()

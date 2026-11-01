@@ -115,6 +115,17 @@ async function* multipart(
   yield encoder.encode(`--${boundary}--\r\n`)
 }
 
+/** Код ошибки из тела ответа сервиса: {"error":{"code":"..."}}. */
+const errorCode = (body: string): string | undefined => {
+  try {
+    const parsed = JSON.parse(body) as { error?: { code?: unknown } }
+    const code = parsed.error?.code
+    return typeof code === 'string' ? code : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export class HttpAiClient implements AiClient {
   constructor(
     private readonly baseUrl: string,
@@ -157,6 +168,12 @@ export class HttpAiClient implements AiClient {
     // 413 и 422 — про присланное медиа, каталог или параметры: повтор ничего
     // не изменит. Сюда же попадает face_catalog_limit.
     if (response.status === 413 || response.status === 422) {
+      return { status: 'rejected', detail: detail.slice(0, 500) }
+    }
+    // model_request сервис отдаёт с кодом 502, но смысл у него терминальный:
+    // Meta отвергла именно эти байты или сам запрос. Повторять их бессмысленно,
+    // а стоит это десяти платных вызовов на каждую задачу — наступали.
+    if (errorCode(detail) === 'model_request') {
       return { status: 'rejected', detail: detail.slice(0, 500) }
     }
     // Остальное, включая 401, 502 и 503 model_unconfigured, — наша неполадка

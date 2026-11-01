@@ -95,6 +95,7 @@ const analysesWith = (record: AnalysisRecord | null): AnalysisRepository => ({
     record && record.id === id && record.ownerId === ownerId ? record : null,
   claim: async () => null,
   latestDone: async () => null,
+  latestPending: async () => null,
   finish: async () => {
     throw new Error('маршрут рендера разборов не заполняет')
   },

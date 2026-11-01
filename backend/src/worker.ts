@@ -151,17 +151,31 @@ const runRender = async (job: RenderJob): Promise<QueueOutcome> => {
     if (record.status !== 'done') return abort(job, `разбор не готов (${record.status})`)
   } else {
     // Готовый разбор того же исходника переиспользуем: модели платные.
-    record = await analyses!.latestDone(job.ownerId, job.sourceMediaId)
-    if (!record) {
-      const created = await analyses!.create({
+    // Незавершённый — тоже: иначе каждая повторная доставка начинала бы новый
+    // разбор и оставляла за собой брошенные записи.
+    record =
+      (await analyses!.latestDone(job.ownerId, job.sourceMediaId)) ??
+      (await analyses!.latestPending(job.ownerId, job.sourceMediaId)) ??
+      (await analyses!.create({
         id: crypto.randomUUID(),
         ownerId: job.ownerId,
         sourceMediaId: job.sourceMediaId,
-      })
-      await analyses!.claim(created.id)
-      const step = await prepareAnalysis(job, created)
-      if ('outcome' in step) return step.outcome
-      record = step.value
+      }))
+    if (record.status !== 'done') {
+      const claimed = await analyses!.claim(record.id)
+      if (!claimed) {
+        // Разбор завершился помимо нас: перечитываем, чтобы не рендерить по
+        // пустой записи.
+        const fresh = await analyses!.get(record.id, job.ownerId)
+        if (!fresh || fresh.status !== 'done') {
+          return abort(job, `разбор не удался: ${fresh?.error ?? 'состояние неизвестно'}`)
+        }
+        record = fresh
+      } else {
+        const step = await prepareAnalysis(job, claimed)
+        if ('outcome' in step) return step.outcome
+        record = step.value
+      }
     }
   }
 

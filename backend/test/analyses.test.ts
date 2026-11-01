@@ -68,6 +68,17 @@ class MemoryAnalyses implements AnalysisRepository {
     )
   }
 
+  async latestPending(ownerId: string, sourceMediaId: string): Promise<AnalysisRecord | null> {
+    return (
+      [...this.records.values()].find(
+        (record) =>
+          record.ownerId === ownerId &&
+          record.sourceMediaId === sourceMediaId &&
+          (record.status === 'queued' || record.status === 'preparing'),
+      ) ?? null
+    )
+  }
+
   async finish(id: string, prepared: Uint8Array): Promise<AnalysisRecord> {
     const record = this.records.get(id)!
     const { people, warnings, sourceDuration } = readPeople(prepared)
