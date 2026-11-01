@@ -1,0 +1,565 @@
+export type Principal = { userId: string; isAnonymous: boolean; familyId: string }
+
+export type TokenPair = {
+  accessToken: string
+  refreshToken: string
+  familyId: string
+  expiresIn: number
+  refreshExpiresAt: string
+  tokenType: 'Bearer'
+  user: { id: string; isAnonymous: boolean }
+}
+
+export type IdentityOwner = {
+  userId: string
+  kind: 'guest' | 'registered'
+  state: 'active' | 'upgrading' | 'deleting' | 'deleted'
+  lastActiveAt: number
+  credentialEpoch: number
+  upgradeOperationId?: string
+}
+
+export type IdentityAccess = { hash: string; expiresAt: number }
+export type IdentityFamily = {
+  familyId: string
+  userId: string
+  credentialEpoch: number
+  sessionBindingHash: string
+  refreshHash: string
+  usedRefreshHashes: Set<string>
+  absoluteExpiresAt: number
+  revokedAt?: number
+  access: IdentityAccess[]
+}
+
+export type CreateIdentity = { owner: IdentityOwner; family: IdentityFamily }
+
+export interface IdentityRepository {
+  create(input: CreateIdentity): Promise<void>
+  createFamily(family: IdentityFamily): Promise<void>
+  findAccess(
+    hash: string,
+    now: number,
+  ): Promise<{ owner: IdentityOwner; family: IdentityFamily } | null>
+  findRefresh(
+    hash: string,
+  ): Promise<{ owner: IdentityOwner; family: IdentityFamily; reused: boolean } | null>
+  rotate(
+    family: IdentityFamily,
+    currentHash: string,
+    nextHash: string,
+    access: IdentityAccess,
+  ): Promise<IdentityFamily | null>
+  revokeReuse(familyId: string, hash: string, now: number): Promise<boolean>
+  revokeFamily(familyId: string, hash: string, now: number): Promise<boolean>
+  touch(userId: string, now: number): Promise<boolean>
+  revokeAll(userId: string, epoch: number, now: number): Promise<boolean>
+  claimUpgrade(userId: string, epoch: number, operationId: string): Promise<boolean>
+  completeUpgrade(userId: string, operationId: string): Promise<boolean>
+  findOwner(userId: string): Promise<IdentityOwner | null>
+  findSession(hash: string): Promise<{ owner: IdentityOwner; family: IdentityFamily } | null>
+}
+
+export class MemoryIdentityStore implements IdentityRepository {
+  readonly owners = new Map<string, IdentityOwner>()
+  readonly families = new Map<string, IdentityFamily>()
+
+  async create({ owner, family }: CreateIdentity) {
+    if (this.owners.has(owner.userId)) throw new Error('identity already exists')
+    this.owners.set(owner.userId, owner)
+    this.families.set(family.familyId, family)
+  }
+
+  async createFamily(family: IdentityFamily) {
+    if (this.families.has(family.familyId)) throw new Error('identity family already exists')
+    this.families.set(family.familyId, family)
+  }
+
+  async findAccess(hash: string, now: number) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (owner && family.access.some((item) => item.hash === hash && item.expiresAt > now))
+        return { owner, family }
+    }
+    return null
+  }
+
+  async findRefresh(hash: string) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (!owner) continue
+      if (family.usedRefreshHashes.has(hash)) return { owner, family, reused: true }
+      if (family.refreshHash === hash) return { owner, family, reused: false }
+    }
+    return null
+  }
+
+  async rotate(
+    family: IdentityFamily,
+    currentHash: string,
+    nextHash: string,
+    access: IdentityAccess,
+  ) {
+    if (family.refreshHash !== currentHash || family.revokedAt !== undefined) return null
+    family.usedRefreshHashes.add(currentHash)
+    family.refreshHash = nextHash
+    family.access.push(access)
+    return family
+  }
+
+  async revokeReuse(familyId: string, hash: string, now: number) {
+    const family = this.families.get(familyId)
+    if (!family?.usedRefreshHashes.has(hash) || family.revokedAt !== undefined) return false
+    family.revokedAt = now
+    return true
+  }
+
+  async revokeFamily(familyId: string, hash: string, now: number) {
+    const family = this.families.get(familyId)
+    if (!family || family.refreshHash !== hash || family.revokedAt !== undefined) return false
+    family.revokedAt = now
+    return true
+  }
+
+  async touch(userId: string, now: number) {
+    const owner = this.owners.get(userId)
+    if (!owner || owner.state !== 'active') return false
+    owner.lastActiveAt = now
+    return true
+  }
+
+  async revokeAll(userId: string, epoch: number, now: number) {
+    const owner = this.owners.get(userId)
+    if (!owner || owner.state !== 'active' || owner.credentialEpoch !== epoch) return false
+    owner.credentialEpoch += 1
+    for (const family of this.families.values())
+      if (family.userId === userId) family.revokedAt = now
+    return true
+  }
+
+  async claimUpgrade(userId: string, epoch: number, operationId: string) {
+    const owner = this.owners.get(userId)
+    if (
+      !owner ||
+      owner.kind !== 'guest' ||
+      owner.state !== 'active' ||
+      owner.credentialEpoch !== epoch
+    ) {
+      return false
+    }
+    owner.state = 'upgrading'
+    owner.upgradeOperationId = operationId
+    return true
+  }
+
+  async completeUpgrade(userId: string, operationId: string) {
+    const owner = this.owners.get(userId)
+    if (
+      owner?.kind === 'guest' &&
+      owner.state === 'deleted' &&
+      owner.upgradeOperationId === operationId
+    ) {
+      return true
+    }
+    if (
+      !owner ||
+      owner.kind !== 'guest' ||
+      owner.state !== 'upgrading' ||
+      owner.upgradeOperationId !== operationId
+    ) {
+      return false
+    }
+    owner.state = 'deleted'
+    owner.credentialEpoch += 1
+    return true
+  }
+
+  async findOwner(userId: string) {
+    return this.owners.get(userId) ?? null
+  }
+
+  async findSession(hash: string) {
+    for (const family of this.families.values()) {
+      const owner = this.owners.get(family.userId)
+      if (owner && family.sessionBindingHash === hash) return { owner, family }
+    }
+    return null
+  }
+}
+
+type IdentityOptions = {
+  now?: () => Date
+  randomToken?: () => string
+  accessLifetimeMs?: number
+  refreshLifetimeMs?: number
+}
+
+const defaultRandomToken = () => {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const hashCredential = async (credential: string) => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(credential))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const csrfForRefresh = (refreshToken: string) => hashCredential(`r2r-csrf:${refreshToken}`)
+
+const secureEqual = (left: string, right: string) => {
+  const length = Math.max(left.length, right.length)
+  let difference = left.length ^ right.length
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0)
+  }
+  return difference === 0
+}
+
+export class IdentityService {
+  private readonly now: () => Date
+  private readonly randomToken: () => string
+  private readonly accessLifetimeMs: number
+  private readonly refreshLifetimeMs: number
+
+  constructor(
+    private readonly store: IdentityRepository,
+    options: IdentityOptions = {},
+  ) {
+    this.now = options.now ?? (() => new Date())
+    this.randomToken = options.randomToken ?? defaultRandomToken
+    this.accessLifetimeMs = options.accessLifetimeMs ?? 15 * 60 * 1000
+    this.refreshLifetimeMs = options.refreshLifetimeMs ?? 30 * 24 * 60 * 60 * 1000
+  }
+
+  async registerGuest(userId: string, sessionToken = userId): Promise<TokenPair> {
+    const now = this.now().getTime()
+    const owner: IdentityOwner = {
+      userId,
+      kind: 'guest',
+      state: 'active',
+      lastActiveAt: now,
+      credentialEpoch: 0,
+    }
+    const created = await this.newFamily(owner, now, sessionToken)
+    await this.store.create({ owner, family: created.family })
+    return created.pair
+  }
+
+  async registerRegistered(userId: string, sessionToken: string): Promise<TokenPair> {
+    const now = this.now().getTime()
+    const existing = await this.store.findOwner(userId)
+    if (existing && (existing.kind !== 'registered' || existing.state !== 'active')) {
+      throw new Error('identity owner is not available for sign-in')
+    }
+    const owner: IdentityOwner = existing ?? {
+      userId,
+      kind: 'registered',
+      state: 'active',
+      lastActiveAt: now,
+      credentialEpoch: 0,
+    }
+    const created = await this.newFamily(owner, now, sessionToken)
+    if (existing) await this.store.createFamily(created.family)
+    else await this.store.create({ owner, family: created.family })
+    return created.pair
+  }
+
+  async authenticateAccess(accessToken: string): Promise<Principal | null> {
+    const hash = await hashCredential(accessToken)
+    const now = this.now().getTime()
+    const found = await this.store.findAccess(hash, now)
+    if (found) {
+      const { owner, family } = found
+      if (
+        family.revokedAt === undefined &&
+        family.absoluteExpiresAt > now &&
+        owner?.state === 'active' &&
+        owner.credentialEpoch === family.credentialEpoch &&
+        family.access.some((credential) => credential.hash === hash && credential.expiresAt > now)
+      ) {
+        return {
+          userId: owner.userId,
+          isAnonymous: owner.kind === 'guest',
+          familyId: family.familyId,
+        }
+      }
+    }
+    return null
+  }
+
+  async refresh(refreshToken: string): Promise<TokenPair | null> {
+    const hash = await hashCredential(refreshToken)
+    const now = this.now().getTime()
+    const found = await this.store.findRefresh(hash)
+    if (found) {
+      const { owner, family, reused } = found
+      if (reused) {
+        await this.store.revokeReuse(family.familyId, hash, now)
+        return null
+      }
+      if (
+        family.revokedAt !== undefined ||
+        family.absoluteExpiresAt <= now ||
+        owner?.state !== 'active' ||
+        owner.credentialEpoch !== family.credentialEpoch
+      ) {
+        return null
+      }
+      return this.rotate(family, owner, hash, now)
+    }
+    return null
+  }
+
+  async refreshCsrfToken(refreshToken: string): Promise<string | null> {
+    const hash = await hashCredential(refreshToken)
+    const found = await this.store.findRefresh(hash)
+    const now = this.now().getTime()
+    if (
+      !found ||
+      found.reused ||
+      found.family.revokedAt !== undefined ||
+      found.family.absoluteExpiresAt <= now
+    ) {
+      return null
+    }
+    const currentFamily =
+      (found.owner.state === 'active' || found.owner.state === 'upgrading') &&
+      found.owner.credentialEpoch === found.family.credentialEpoch
+    const completionRecovery =
+      this.completedUpgradeRecovery(found.owner, found.family, now).status === 'claimed'
+    if (!currentFamily && !completionRecovery) return null
+    return csrfForRefresh(refreshToken)
+  }
+
+  async matchesRefreshCsrf(refreshToken: string, csrfToken: string): Promise<boolean> {
+    return secureEqual(await csrfForRefresh(refreshToken), csrfToken)
+  }
+
+  async recordActivity(accessToken: string): Promise<boolean> {
+    const principal = await this.authenticateAccess(accessToken)
+    if (!principal) return false
+    return this.store.touch(principal.userId, this.now().getTime())
+  }
+
+  async revokeAll(accessToken: string): Promise<boolean> {
+    const principal = await this.authenticateAccess(accessToken)
+    if (!principal) return false
+    const now = this.now().getTime()
+    const found = await this.store.findAccess(await hashCredential(accessToken), now)
+    if (!found) return false
+    return this.store.revokeAll(principal.userId, found.owner.credentialEpoch, now)
+  }
+
+  async revokeRefresh(refreshToken: string): Promise<boolean> {
+    const hash = await hashCredential(refreshToken)
+    const found = await this.store.findRefresh(hash)
+    const now = this.now().getTime()
+    if (!found || found.reused || !this.validFamily(found.owner, found.family, now)) return false
+    return this.store.revokeFamily(found.family.familyId, hash, now)
+  }
+
+  async authenticateSession(userId: string, sessionToken: string): Promise<boolean> {
+    const found = await this.store.findSession(await hashCredential(sessionToken))
+    return Boolean(
+      found &&
+      found.owner.userId === userId &&
+      this.validFamily(found.owner, found.family, this.now().getTime()),
+    )
+  }
+
+  async revokeSession(userId: string, sessionToken: string): Promise<boolean> {
+    const found = await this.store.findSession(await hashCredential(sessionToken))
+    const now = this.now().getTime()
+    if (
+      !found ||
+      found.owner.userId !== userId ||
+      !this.validFamily(found.owner, found.family, now)
+    ) {
+      return false
+    }
+    return this.store.revokeFamily(found.family.familyId, found.family.refreshHash, now)
+  }
+
+  async claimUpgradeWithAccess(accessToken: string): Promise<UpgradeClaim> {
+    const hash = await hashCredential(accessToken)
+    const now = this.now().getTime()
+    const found = await this.store.findAccess(hash, now)
+    if (!found) return { status: 'invalid' }
+    const resumed = this.resumedUpgrade(found.owner, found.family, now)
+    if (resumed) return resumed
+    if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
+    if (found.owner.kind !== 'guest') return { status: 'transition' }
+    return this.claimUpgrade(found.owner, found.family)
+  }
+
+  async claimUpgradeWithRefresh(refreshToken: string): Promise<UpgradeClaim> {
+    const hash = await hashCredential(refreshToken)
+    const now = this.now().getTime()
+    const found = await this.store.findRefresh(hash)
+    if (!found) return { status: 'invalid' }
+    if (found.reused) {
+      await this.store.revokeReuse(found.family.familyId, hash, now)
+      return { status: 'invalid' }
+    }
+    const resumed = this.resumedUpgrade(found.owner, found.family, now)
+    if (resumed) return resumed
+    if (!this.validFamily(found.owner, found.family, now)) return { status: 'invalid' }
+    if (found.owner.kind !== 'guest') return { status: 'transition' }
+    return this.claimUpgrade(found.owner, found.family)
+  }
+
+  async recoverCompletedUpgradeWithAccess(accessToken: string): Promise<UpgradeClaim> {
+    const now = this.now().getTime()
+    const found = await this.store.findAccess(await hashCredential(accessToken), now)
+    return found
+      ? this.completedUpgradeRecovery(found.owner, found.family, now)
+      : { status: 'invalid' }
+  }
+
+  async recoverCompletedUpgradeWithRefresh(refreshToken: string): Promise<UpgradeClaim> {
+    const hash = await hashCredential(refreshToken)
+    const now = this.now().getTime()
+    const found = await this.store.findRefresh(hash)
+    if (!found) return { status: 'invalid' }
+    if (found.reused) {
+      await this.store.revokeReuse(found.family.familyId, hash, now)
+      return { status: 'invalid' }
+    }
+    return this.completedUpgradeRecovery(found.owner, found.family, now)
+  }
+
+  async isCleanupCandidate(userId: string): Promise<boolean> {
+    const owner = await this.store.findOwner(userId)
+    return Boolean(
+      owner?.kind === 'guest' &&
+      owner.state === 'active' &&
+      owner.lastActiveAt < this.now().getTime() - 24 * 60 * 60 * 1000,
+    )
+  }
+
+  completeUpgrade(userId: string, operationId: string) {
+    return this.store.completeUpgrade(userId, operationId)
+  }
+
+  private async newFamily(owner: IdentityOwner, now: number, sessionToken: string) {
+    const accessToken = this.randomToken()
+    const refreshToken = this.randomToken()
+    const family: IdentityFamily = {
+      familyId: this.randomToken(),
+      userId: owner.userId,
+      credentialEpoch: owner.credentialEpoch,
+      sessionBindingHash: await hashCredential(sessionToken),
+      refreshHash: await hashCredential(refreshToken),
+      usedRefreshHashes: new Set(),
+      absoluteExpiresAt: now + this.refreshLifetimeMs,
+      access: [{ hash: await hashCredential(accessToken), expiresAt: now + this.accessLifetimeMs }],
+    }
+    return { family, pair: this.pair(accessToken, refreshToken, family, owner) }
+  }
+
+  private validFamily(owner: IdentityOwner, family: IdentityFamily, now: number) {
+    return (
+      family.revokedAt === undefined &&
+      family.absoluteExpiresAt > now &&
+      owner.state === 'active' &&
+      owner.credentialEpoch === family.credentialEpoch
+    )
+  }
+
+  private async claimUpgrade(owner: IdentityOwner, family: IdentityFamily): Promise<UpgradeClaim> {
+    const operationId = this.randomToken()
+    const claimed = await this.store.claimUpgrade(owner.userId, owner.credentialEpoch, operationId)
+    if (!claimed) return { status: 'transition' }
+    return {
+      status: 'claimed',
+      operationId,
+      principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
+    }
+  }
+
+  private resumedUpgrade(
+    owner: IdentityOwner,
+    family: IdentityFamily,
+    now: number,
+  ): UpgradeClaim | undefined {
+    if (
+      owner.kind === 'guest' &&
+      owner.state === 'upgrading' &&
+      owner.upgradeOperationId &&
+      owner.credentialEpoch === family.credentialEpoch &&
+      family.revokedAt === undefined &&
+      family.absoluteExpiresAt > now
+    ) {
+      return {
+        status: 'claimed',
+        operationId: owner.upgradeOperationId,
+        principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
+      }
+    }
+  }
+
+  private completedUpgradeRecovery(
+    owner: IdentityOwner,
+    family: IdentityFamily,
+    now: number,
+  ): UpgradeClaim {
+    if (
+      owner.kind !== 'guest' ||
+      owner.state !== 'deleted' ||
+      !owner.upgradeOperationId ||
+      owner.credentialEpoch !== family.credentialEpoch + 1 ||
+      family.revokedAt !== undefined ||
+      family.absoluteExpiresAt <= now
+    ) {
+      return { status: 'invalid' }
+    }
+    return {
+      status: 'claimed',
+      operationId: owner.upgradeOperationId,
+      principal: { userId: owner.userId, isAnonymous: true, familyId: family.familyId },
+    }
+  }
+
+  private async rotate(
+    family: IdentityFamily,
+    owner: IdentityOwner,
+    currentHash: string,
+    now: number,
+  ): Promise<TokenPair | null> {
+    const accessToken = this.randomToken()
+    const refreshToken = this.randomToken()
+    const nextHash = await hashCredential(refreshToken)
+    const access = {
+      hash: await hashCredential(accessToken),
+      expiresAt: now + this.accessLifetimeMs,
+    }
+    const rotated = await this.store.rotate(family, currentHash, nextHash, access)
+    if (!rotated) {
+      await this.store.revokeReuse(family.familyId, currentHash, now)
+      return null
+    }
+    return this.pair(accessToken, refreshToken, rotated, owner)
+  }
+
+  private pair(
+    accessToken: string,
+    refreshToken: string,
+    family: IdentityFamily,
+    owner: IdentityOwner,
+  ): TokenPair {
+    return {
+      accessToken,
+      refreshToken,
+      familyId: family.familyId,
+      expiresIn: Math.floor(this.accessLifetimeMs / 1000),
+      refreshExpiresAt: new Date(family.absoluteExpiresAt).toISOString(),
+      tokenType: 'Bearer',
+      user: { id: owner.userId, isAnonymous: owner.kind === 'guest' },
+    }
+  }
+}
+
+export type UpgradeClaim =
+  | { status: 'claimed'; operationId: string; principal: Principal }
+  | { status: 'invalid' | 'transition' }

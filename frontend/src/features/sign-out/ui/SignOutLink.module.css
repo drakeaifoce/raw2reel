@@ -1,10 +1,20 @@
 .link {
   padding: 12px 4px;
   color: var(--color-text-secondary);
+  font-family: inherit;
   font-size: 13px;
   text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 .link:hover {
   color: var(--color-text);
+}
+
+.error {
+  display: block;
+  color: var(--color-danger);
+  font-size: 12px;
 }

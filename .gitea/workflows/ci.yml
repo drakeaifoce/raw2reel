@@ -73,6 +73,8 @@ jobs:
       - run: bun run format:check
       - run: bun run typecheck
       - run: bun test
+      - run: bunx playwright install --with-deps chromium --only-shell
+      - run: bun run test:docs:browser
 
   ai:
     needs: changes

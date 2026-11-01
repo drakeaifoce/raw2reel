@@ -8,9 +8,19 @@ export type Config = {
   version: string
   mongoUrl: string | undefined
   mongoDb: string
+  betterAuthSecret: string | undefined
+  betterAuthUrl: string | undefined
+  betterAuthTrustedOrigins: string[]
   blobConnectionString: string | undefined
   blobContainerUploads: string
   blobContainerRenders: string
+  mediaAllowedTypes: string[]
+  maxMediaSizeBytes: number
+}
+
+const positiveNumber = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value ?? fallback)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 export const config: Config = {
@@ -20,7 +30,18 @@ export const config: Config = {
   version: process.env.GIT_SHA ?? 'dev',
   mongoUrl: process.env.MONGO_URL,
   mongoDb: process.env.MONGO_DB ?? 'raw2reel',
+  betterAuthSecret: process.env.BETTER_AUTH_SECRET,
+  betterAuthUrl: process.env.BETTER_AUTH_URL,
+  betterAuthTrustedOrigins: (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
   blobConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   blobContainerUploads: process.env.AZURE_BLOB_CONTAINER_UPLOADS ?? 'uploads',
   blobContainerRenders: process.env.AZURE_BLOB_CONTAINER_RENDERS ?? 'renders',
+  mediaAllowedTypes: (process.env.MEDIA_ALLOWED_TYPES ?? 'video/*,image/*,audio/*')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+  maxMediaSizeBytes: positiveNumber(process.env.MAX_MEDIA_SIZE_BYTES, 100 * 1024 * 1024),
 }

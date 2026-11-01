@@ -1,8 +1,7 @@
 # backend
 
-Bun HTTP API. Сейчас это каркас: есть конфигурация, проверки готовности и
-тесты — ровно столько, чтобы конвейер сборки и развёртывания был настоящим.
-Бизнес-логики пока нет.
+Bun HTTP API: Better Auth, health/readiness, загрузка и выдача медиа через Azure Blob,
+метаданные в MongoDB и минимальный сквозной пример работы с базой.
 
 ## Стек
 
@@ -29,9 +28,104 @@ bun run dev
 
 ## Эндпоинты
 
+В production Caddy публикует backend под префиксом `/api` и удаляет этот
+префикс перед проксированием. Поэтому публичные пути ниже начинаются с `/api`,
+а при прямом обращении к backend на порту 3000 тот же путь используется без
+`/api` (например, `/media` вместо `/api/media`).
+
 `GET /health` отвечает всегда, пока жив процесс, — его опрашивает healthcheck
 контейнера, поэтому он не зависит от внешних сервисов.
 
 `GET /ready` проверяет Mongo и Blob и возвращает 503, если какая-то
 зависимость в состоянии `error`. Ненастроенная зависимость неготовностью не
 считается: пока Cosmos не создан, деплой не должен из-за этого откатываться.
+
+### Медиа
+
+Все media-маршруты требуют либо действующую серверную web-сессию, либо API
+access bearer, выпущенный identity service. Заголовки вроде `X-User-Id` и поля
+`ownerId` не считаются identity. Одновременная cookie и bearer-аутентификация
+отклоняется. Неавторизованный запрос получает 401.
+
+Backend всегда берёт владельца из проверенного credential. Upload сохраняет
+`ownerId` в MongoDB и создаёт Blob key в серверном owner namespace. List и get
+фильтруются по этому `ownerId`; чужой id возвращает тот же 404, что отсутствующий,
+и Blob при этом не читается. Внешний ответ не раскрывает `ownerId`, `blobKey`,
+storage credentials или прямые Blob URL.
+
+`POST /api/media` принимает `multipart/form-data` с полем `file`. Допустимые
+MIME-типы задаёт `MEDIA_ALLOWED_TYPES` (по умолчанию
+`video/*,image/*,audio/*`), максимальный размер — `MAX_MEDIA_SIZE_BYTES`
+(по умолчанию 100 MiB). Успешный ответ `201`:
+
+```json
+{
+  "id": "0d587a6f-315f-4c28-968a-9e9ab43f156f",
+  "name": "clip.mp4",
+  "type": "video/mp4",
+  "size": 12345,
+  "createdAt": "2026-10-29T12:00:00.000Z"
+}
+```
+
+`GET /api/media?limit=20` возвращает `{ "items": [...] }`; `limit` должен быть
+целым числом от 1 до 100. `GET /api/media/:id` потоково отдаёт содержимое Blob
+с сохранёнными `Content-Type`, `Content-Length` и именем файла. Ответ также
+содержит `X-Content-Type-Options: nosniff` и sandbox CSP, чтобы загруженный
+контент не мог выполнить скрипт в origin приложения.
+
+Legacy-записи без `ownerId` никому не видны и автоматически не назначаются.
+Будущее назначение владельца должно быть отдельной управляемой миграцией с
+доказанным соответствием. Для guest→registered upgrade repository предоставляет
+идемпотентный server-only перенос по точному прежнему `ownerId` и durable
+`operationId`; клиентские owner identifiers в нём не участвуют. Этот перенос не
+удаляет Blob и не меняет данные чужих или ownerless записей.
+
+Регистрация хранит state machine операции в `registrationOperations`, не
+сохраняя пароль. После создания Better Auth account она создаёт registered
+identity, переносит только metadata прежнего guest owner и закрывает guest
+identity. Повтор с тем же guest credential продолжает тот же `operationId`; если
+процесс остановился сразу после создания account, те же credentials сначала
+проверяются через sign-in, поэтому второй account не создаётся. Клиент после
+ответа `202` входит в созданный account обычным sign-in.
+
+Ошибки клиента возвращаются как `{ "error": "...", "code": "..." }` с
+соответствующим статусом 400, 404, 413 или 415. Если MongoDB или Blob не
+настроены, API отвечает 503 с кодом `DEPENDENCY_UNAVAILABLE`.
+
+### Авторизация
+
+Публичные маршруты Better Auth находятся под `/api/auth/*`; Caddy снимает
+`/api`, а backend восстанавливает публичный путь перед передачей запроса в
+Better Auth. Доступны email/password signup, signin, signout и get-session.
+
+Нужны `BETTER_AUTH_SECRET` (не менее 32 случайных символов),
+`BETTER_AUTH_URL` и существующие `MONGO_URL`/`MONGO_DB`. Дополнительные origin
+для локальной разработки задаются через `BETTER_AUTH_TRUSTED_ORIGINS`.
+Production release нельзя выполнять без безопасно настроенного secret.
+
+Mongo adapter намеренно работает с `transaction: false`: Cosmos DB for MongoDB
+ограничивает транзакции одной unsharded collection, а signup пишет несколько
+auth-коллекций. Это оставляет риск частичной записи при сбое между операциями,
+но не требует несовместимых cross-collection transactions.
+
+### Защищённый пример MongoDB
+
+`GET /api/db/hello` требует сессию, делает upsert документа в коллекцию `examples`, читает его
+обратно и отвечает `{ "message": "hello from MongoDB" }`.
+
+## Ручная проверка
+
+```bash
+# Через публичный Caddy (замените localhost на адрес развёрнутого приложения):
+curl -sS -F 'file=@./clip.mp4;type=video/mp4' http://localhost/api/media # с session cookie
+curl -sS 'http://localhost/api/media?limit=10'
+curl -OJ http://localhost/api/media/<id>
+curl -sS http://localhost/api/db/hello # с session cookie
+
+# Напрямую к backend, минуя Caddy:
+curl -sS -F 'file=@./clip.mp4;type=video/mp4' http://localhost:3000/media
+curl -sS 'http://localhost:3000/media?limit=10'
+curl -OJ http://localhost:3000/media/<id>
+curl -sS http://localhost:3000/db/hello
+```
