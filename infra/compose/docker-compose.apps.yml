@@ -51,6 +51,10 @@ services:
     image: raw2reel/backend:${BACKEND_TAG:?нужен BACKEND_TAG}
     restart: unless-stopped
     command: ["bun", "src/worker.ts"]
+    # Образ бэкенда несёт HEALTHCHECK на порт 3000, а воркер ничего не слушает —
+    # без отключения он навсегда остаётся unhealthy.
+    healthcheck:
+      disable: true
     env_file:
       - /opt/raw2reel/secrets/app.env
       - /opt/raw2reel/secrets/backend.env

@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 import { BlobServiceClient, type ContainerClient } from '@azure/storage-blob'
 import { MongoClient, type Collection } from 'mongodb'
 import type { Config } from './config'
+import { ensureIndexes } from './mongo-indexes'
 
 export type MediaMetadata = {
   id: string
@@ -30,7 +31,7 @@ export class MediaService implements MediaRepository {
     private readonly collection: Collection<MediaMetadata>,
     private readonly container: ContainerClient,
   ) {
-    this.indexesReady = Promise.all([
+    this.indexesReady = ensureIndexes([
       collection.createIndex({ ownerId: 1, id: 1 }, { name: 'media_owner_id', unique: true }),
       collection.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'media_owner_created_at' }),
     ])

@@ -5,6 +5,7 @@
  */
 import { MongoClient, type Collection } from 'mongodb'
 import type { Config } from './config'
+import { ensureIndexes } from './mongo-indexes'
 
 export type RenderJobStatus = 'queued' | 'rendering' | 'done' | 'failed'
 
@@ -47,7 +48,7 @@ export class RenderJobService implements RenderJobRepository {
   private readonly indexesReady: Promise<unknown>
 
   constructor(private readonly collection: Collection<RenderJob>) {
-    this.indexesReady = Promise.all([
+    this.indexesReady = ensureIndexes([
       collection.createIndex({ id: 1 }, { name: 'render_job_id', unique: true }),
       collection.createIndex({ ownerId: 1, createdAt: -1 }, { name: 'render_job_owner_created' }),
     ])
