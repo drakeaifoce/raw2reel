@@ -366,3 +366,38 @@ def test_many_short_cuts_do_not_accumulate_timeline_drift(tmp_path, tools):
         result = pipeline.render(source, tmp_path / "forty.mp4", analysis_path=artifact)
     assert result["cuts"] == 39
     assert abs(result["duration"] - 13.333333) <= 1 / 30
+
+
+def test_caption_font_uses_output_pixels_and_safe_bottom_margin(tmp_path, tools):
+    from PIL import Image
+
+    from raw2reel_ai.models import Segment
+
+    source = tmp_path / "black.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:size=720x1280:rate=30:duration=1",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-threads",
+        "1",
+        str(source),
+    )
+    rendered, _ = tools.render(
+        source,
+        [Segment(start=0, end=1, reason="caption", subject_ids=[])],
+        tmp_path,
+        "1\n00:00:00,000 --> 00:00:01,000\nSmall caption",
+        False,
+        None,
+    )
+    frame = tmp_path / "caption.png"
+    tools.ffmpeg("-ss", "0.5", "-i", str(rendered), "-frames:v", "1", str(frame))
+    with Image.open(frame) as image:
+        box = image.convert("L").point(lambda value: 255 if value > 200 else 0).getbbox()
+    assert box is not None
+    assert 15 <= box[3] - box[1] <= 45
+    assert 1150 <= box[3] <= 1220

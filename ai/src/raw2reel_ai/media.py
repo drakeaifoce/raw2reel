@@ -36,7 +36,9 @@ class MediaTools:
                 check=False,
             )
         except FileNotFoundError:
-            variable = "FFPROBE_PATH" if arguments[0] == self.settings.ffprobe_path else "FFMPEG_PATH"
+            variable = (
+                "FFPROBE_PATH" if arguments[0] == self.settings.ffprobe_path else "FFMPEG_PATH"
+            )
             raise MediaError(
                 f"Cannot find executable {Path(arguments[0]).name!r}. Set {variable} "
                 "to its full path, install it on PATH, or put it in ai/.tools/."
@@ -297,10 +299,11 @@ class MediaTools:
             ]
         if srt:
             # Fixed relative filename avoids FFmpeg filter injection/path escaping.
+            # Set script resolution too: SRT's default ASS canvas otherwise scales the font up.
             args += [
                 "-vf",
-                "subtitles=captions.srt:force_style='FontName=DejaVu Sans,"
-                "FontSize=20,Outline=2,MarginV=65'",
+                "subtitles=captions.srt:force_style='PlayResX=720,PlayResY=1280,"
+                "FontName=DejaVu Sans,FontSize=36,Outline=2,MarginL=40,MarginR=40,MarginV=80'",
                 "-c:v",
                 "libx264",
                 "-preset",

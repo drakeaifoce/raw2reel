@@ -7,7 +7,6 @@ from shutil import which
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 LOCAL_TOOLS_DIR = Path(__file__).resolve().parents[2] / ".tools"
 
 
