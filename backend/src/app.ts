@@ -5,6 +5,7 @@ import { createDatabaseService, type DatabaseRepository } from './database'
 import { createRenderQueue, type RenderQueue } from './queue'
 import { createRenderJobService, type RenderJob, type RenderJobRepository } from './render-jobs'
 import { createMediaService, type MediaRepository } from './media'
+import { createAnalysisService, type AnalysisRecord, type AnalysisRepository } from './analyses'
 import { createAuthService } from './auth'
 import type { IdentityService, Principal, TokenPair } from './identity'
 import { createIdentityService } from './identity-mongo'
@@ -127,7 +128,11 @@ export type AppDependencies = {
   identityWebOrigins?: string[]
   renderJobs?: RenderJobRepository
   renderQueue?: RenderQueue
+  analyses?: AnalysisRepository
 }
+
+/** Предел AI-сервиса: больше шестнадцати персонажей он не примет. */
+const MAX_PEOPLE = 16
 
 const defaultRenderJobs = createRenderJobService(config)
 // Очередь подключается лениво: соединение асинхронное, а на уровне модуля
@@ -148,6 +153,7 @@ const defaultDependencies: AppDependencies = {
   registration: createRegistrationService(config, defaultAuth, defaultIdentity, defaultMedia),
   identityWebOrigins: config.betterAuthTrustedOrigins,
   renderJobs: defaultRenderJobs,
+  analyses: createAnalysisService(config),
 }
 
 const error = (message: string, code: string, status: number) =>
@@ -245,6 +251,9 @@ const publicJob = ({
   status,
   duration,
   captions,
+  musicMediaId,
+  analysisId,
+  personIds,
   resultMediaId,
   error: failure,
   createdAt,
@@ -254,10 +263,39 @@ const publicJob = ({
   status,
   duration,
   captions,
+  ...(musicMediaId ? { musicMediaId } : {}),
+  ...(analysisId ? { analysisId } : {}),
+  ...(personIds ? { personIds } : {}),
   ...(resultMediaId ? { resultMediaId } : {}),
   ...(failure ? { error: failure } : {}),
   createdAt,
   updatedAt,
+})
+
+/**
+ * Карточки персонажей для клиента. Превью отдаём ссылкой, а не base64: в
+ * ответе prepare их до 256 штук, и вкладывать их в JSON значило бы гонять
+ * мегабайты на каждый опрос состояния.
+ */
+const publicAnalysis = (record: AnalysisRecord) => ({
+  id: record.id,
+  sourceMediaId: record.sourceMediaId,
+  status: record.status,
+  people: record.people.map((person) => ({
+    id: person.id,
+    label: person.label,
+    observationCount: person.observationCount,
+    ...(person.thumbnailKey
+      ? {
+          thumbnailUrl: `/analyses/${record.id}/people/${encodeURIComponent(person.id)}/thumbnail`,
+        }
+      : {}),
+  })),
+  ...(record.sourceDuration !== undefined ? { sourceDuration: record.sourceDuration } : {}),
+  ...(record.warnings.length > 0 ? { warnings: record.warnings } : {}),
+  ...(record.error ? { error: record.error } : {}),
+  createdAt: record.createdAt,
+  updatedAt: record.updatedAt,
 })
 
 type SignUpBody = { email: string; password: string; name: string; mode: 'new' | 'upgrade' }
@@ -677,7 +715,9 @@ export async function handle(
     pathname === '/media' ||
     pathname.startsWith('/media/') ||
     pathname === '/renders' ||
-    pathname.startsWith('/renders/')
+    pathname.startsWith('/renders/') ||
+    pathname === '/analyses' ||
+    pathname.startsWith('/analyses/')
   ) {
     const principal = await requireMediaPrincipal(request, dependencies.auth, dependencies.identity)
     if (principal instanceof Response) return principal
@@ -749,6 +789,106 @@ export async function handle(
     })
   }
 
+  if (pathname === '/analyses' && request.method === 'POST') {
+    if (!dependencies.media)
+      return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    if (!dependencies.analyses)
+      return error('analysis storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    if (!dependencies.renderJobs)
+      return error('render jobs are not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    const queue = dependencies.renderQueue ?? (await defaultRenderQueue())
+    if (!queue) return error('render queue is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return error('JSON body is required', 'INVALID_REQUEST', 400)
+    }
+    if (typeof body !== 'object' || body === null) {
+      return error('JSON body is required', 'INVALID_REQUEST', 400)
+    }
+    const sourceMediaId = (body as Record<string, unknown>).sourceMediaId
+    if (typeof sourceMediaId !== 'string' || sourceMediaId.length === 0) {
+      return error('sourceMediaId is required', 'INVALID_REQUEST', 400)
+    }
+
+    // Проверяем медиа здесь, а не в воркере: иначе разбор гарантированно
+    // провалится через минуту вместо честного 404 сразу.
+    const source = await dependencies.media.get(sourceMediaId, mediaPrincipal!.userId)
+    if (!source) return error('source media was not found', 'MEDIA_NOT_FOUND', 404)
+    await source.body.cancel()
+
+    const analysis = await dependencies.analyses.create({
+      id: crypto.randomUUID(),
+      ownerId: mediaPrincipal!.userId,
+      sourceMediaId,
+    })
+    const job = await dependencies.renderJobs.create({
+      id: crypto.randomUUID(),
+      ownerId: mediaPrincipal!.userId,
+      kind: 'prepare',
+      sourceMediaId,
+      analysisId: analysis.id,
+    })
+    try {
+      await queue.publish(job.id)
+    } catch (failure) {
+      // Записи уже есть, но в очередь не попали — помечаем провалившимися,
+      // иначе разбор навсегда остался бы в queued и выглядел как ожидающий.
+      const detail =
+        failure instanceof Error ? failure.message : 'не удалось поставить задачу в очередь'
+      await dependencies.renderJobs.fail(job.id, detail)
+      await dependencies.analyses.fail(analysis.id, detail)
+      return error('render queue is unavailable', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const response = json(publicAnalysis(analysis), 202)
+    response.headers.set('location', `/analyses/${analysis.id}`)
+    return response
+  }
+
+  const thumbnailMatch = pathname.match(/^\/analyses\/([^/]+)\/people\/([^/]+)\/thumbnail$/)
+  if (thumbnailMatch && request.method === 'GET') {
+    if (!dependencies.analyses)
+      return error('analysis storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    let id: string
+    let personId: string
+    try {
+      id = decodeURIComponent(thumbnailMatch[1]!)
+      personId = decodeURIComponent(thumbnailMatch[2]!)
+    } catch {
+      return error('analysis id has invalid URL encoding', 'INVALID_ANALYSIS_ID', 400)
+    }
+    const record = await dependencies.analyses.get(id, mediaPrincipal!.userId)
+    if (!record) return error('analysis was not found', 'ANALYSIS_NOT_FOUND', 404)
+    const thumbnail = await dependencies.analyses.readThumbnail(record, personId)
+    if (!thumbnail) return error('thumbnail was not found', 'THUMBNAIL_NOT_FOUND', 404)
+    return new Response(thumbnail.body, {
+      headers: {
+        'content-type': 'image/jpeg',
+        ...(thumbnail.size > 0 ? { 'content-length': String(thumbnail.size) } : {}),
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+      },
+    })
+  }
+
+  const analysisMatch = pathname.match(/^\/analyses\/([^/]+)$/)
+  if (analysisMatch && request.method === 'GET') {
+    if (!dependencies.analyses)
+      return error('analysis storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    let id: string
+    try {
+      id = decodeURIComponent(analysisMatch[1]!)
+    } catch {
+      return error('analysis id has invalid URL encoding', 'INVALID_ANALYSIS_ID', 400)
+    }
+    const record = await dependencies.analyses.get(id, mediaPrincipal!.userId)
+    if (!record) return error('analysis was not found', 'ANALYSIS_NOT_FOUND', 404)
+    return json(publicAnalysis(record))
+  }
+
   if (pathname === '/renders' && request.method === 'POST') {
     if (!dependencies.media)
       return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
@@ -767,9 +907,34 @@ export async function handle(
       return error('JSON body is required', 'INVALID_REQUEST', 400)
     }
     const input = body as Record<string, unknown>
-    const sourceMediaId = input.sourceMediaId
-    if (typeof sourceMediaId !== 'string' || sourceMediaId.length === 0) {
-      return error('sourceMediaId is required', 'INVALID_REQUEST', 400)
+    // Рендеру нужен разбор исходника. Клиент либо присылает готовый
+    // analysisId и выбранных персонажей, либо только sourceMediaId — тогда
+    // воркер разберёт видео сам и выберет персонажей по числу появлений.
+    const analysisId = input.analysisId
+    if (analysisId !== undefined && (typeof analysisId !== 'string' || analysisId.length === 0)) {
+      return error('analysisId must be a non-empty string', 'INVALID_REQUEST', 400)
+    }
+    const requestedSource = input.sourceMediaId
+    if (
+      requestedSource !== undefined &&
+      (typeof requestedSource !== 'string' || requestedSource.length === 0)
+    ) {
+      return error('sourceMediaId must be a non-empty string', 'INVALID_REQUEST', 400)
+    }
+    if ((analysisId === undefined) === (requestedSource === undefined)) {
+      return error('provide either analysisId or sourceMediaId', 'INVALID_REQUEST', 400)
+    }
+    const personIds = input.personIds
+    if (
+      personIds !== undefined &&
+      (!Array.isArray(personIds) ||
+        personIds.some((person) => typeof person !== 'string' || person.length === 0))
+    ) {
+      return error('personIds must be an array of non-empty strings', 'INVALID_REQUEST', 400)
+    }
+    if (personIds !== undefined && analysisId === undefined) {
+      // Проверить идентификаторы можно только по каталогу, а его ещё нет.
+      return error('personIds require analysisId', 'INVALID_REQUEST', 400)
     }
     const musicMediaId = input.musicMediaId
     if (musicMediaId !== undefined && typeof musicMediaId !== 'string') {
@@ -785,11 +950,47 @@ export async function handle(
       return error('captions must be a boolean', 'INVALID_REQUEST', 400)
     }
 
-    // Проверяем медиа здесь, а не в воркере: иначе задача гарантированно
-    // провалится через минуту вместо честного 404 сразу.
-    const source = await dependencies.media.get(sourceMediaId, mediaPrincipal!.userId)
-    if (!source) return error('source media was not found', 'MEDIA_NOT_FOUND', 404)
-    await source.body.cancel()
+    let sourceMediaId: string
+    let chosen: string[] | undefined
+    if (typeof analysisId === 'string') {
+      if (!dependencies.analyses)
+        return error('analysis storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+      const analysis = await dependencies.analyses.get(analysisId, mediaPrincipal!.userId)
+      if (!analysis) return error('analysis was not found', 'ANALYSIS_NOT_FOUND', 404)
+      if (analysis.status !== 'done') {
+        return error(`analysis is not ready (${analysis.status})`, 'ANALYSIS_NOT_READY', 409)
+      }
+      if (analysis.people.length === 0) {
+        // Пустой person_ids AI-сервис не принимает, поэтому говорим прямо.
+        return error('no people were found in the source', 'ANALYSIS_HAS_NO_PEOPLE', 409)
+      }
+      if (personIds !== undefined) {
+        const ids = personIds as string[]
+        const known = new Set(analysis.people.map((person) => person.id))
+        if (
+          ids.length === 0 ||
+          ids.length > MAX_PEOPLE ||
+          new Set(ids).size !== ids.length ||
+          ids.some((id) => !known.has(id))
+        ) {
+          return error(
+            `personIds must be 1..${MAX_PEOPLE} unique ids from the analysis`,
+            'INVALID_REQUEST',
+            400,
+          )
+        }
+        chosen = ids
+      }
+      // Исходник берём из разбора: сервис сверяет каталог с отпечатком видео.
+      sourceMediaId = analysis.sourceMediaId
+    } else {
+      sourceMediaId = requestedSource as string
+      // Проверяем медиа здесь, а не в воркере: иначе задача гарантированно
+      // провалится через минуту вместо честного 404 сразу.
+      const source = await dependencies.media.get(sourceMediaId, mediaPrincipal!.userId)
+      if (!source) return error('source media was not found', 'MEDIA_NOT_FOUND', 404)
+      await source.body.cancel()
+    }
     if (typeof musicMediaId === 'string') {
       const music = await dependencies.media.get(musicMediaId, mediaPrincipal!.userId)
       if (!music) return error('music media was not found', 'MEDIA_NOT_FOUND', 404)
@@ -799,8 +1000,11 @@ export async function handle(
     const job = await dependencies.renderJobs.create({
       id: crypto.randomUUID(),
       ownerId: mediaPrincipal!.userId,
+      kind: 'render',
       sourceMediaId,
       ...(typeof musicMediaId === 'string' ? { musicMediaId } : {}),
+      ...(typeof analysisId === 'string' ? { analysisId } : {}),
+      ...(chosen ? { personIds: chosen } : {}),
       duration,
       captions,
     })

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { AnalysisRecord, AnalysisRepository } from '../src/analyses'
 import { handle, type AppDependencies } from '../src/app'
 import type { MediaMetadata } from '../src/media'
 import type { QueueOutcome, RenderQueue } from '../src/queue'
@@ -69,6 +70,39 @@ const queueOf = (onPublish?: (id: string) => void): RenderQueue => ({
   close: async () => {},
 })
 
+const doneAnalysis = (overrides: Partial<AnalysisRecord> = {}): AnalysisRecord => ({
+  id: 'analysis-1',
+  ownerId: 'user-1',
+  sourceMediaId: 'media-from-analysis',
+  status: 'done',
+  people: [
+    { id: 'p1', label: 'Person 1', observationCount: 9 },
+    { id: 'p2', label: 'Person 2', observationCount: 3 },
+  ],
+  warnings: [],
+  preparedKey: 'analysis-1/analysis.json',
+  createdAt: '2026-11-01T00:00:00.000Z',
+  updatedAt: '2026-11-01T00:00:00.000Z',
+  ...overrides,
+})
+
+/** Из хранилища разборов маршруту рендера нужен только get. */
+const analysesWith = (record: AnalysisRecord | null): AnalysisRepository => ({
+  create: async () => {
+    throw new Error('маршрут рендера разборов не создаёт')
+  },
+  get: async (id, ownerId) =>
+    record && record.id === id && record.ownerId === ownerId ? record : null,
+  claim: async () => null,
+  latestDone: async () => null,
+  finish: async () => {
+    throw new Error('маршрут рендера разборов не заполняет')
+  },
+  fail: async () => {},
+  readPrepared: async () => new Uint8Array(),
+  readThumbnail: async () => null,
+})
+
 function dependencies(overrides: Partial<AppDependencies> = {}): AppDependencies {
   return {
     auth: {
@@ -82,6 +116,7 @@ function dependencies(overrides: Partial<AppDependencies> = {}): AppDependencies
     },
     renderJobs: new MemoryJobs(),
     renderQueue: queueOf(),
+    analyses: analysesWith(doneAnalysis()),
     ...overrides,
   }
 }
@@ -229,5 +264,90 @@ describe('GET /renders/{id}', () => {
       }),
     )
     expect(response.status).toBe(401)
+  })
+})
+
+describe('POST /renders по готовому разбору', () => {
+  test('берёт исходник из разбора, а не из тела запроса: сервис сверяет отпечаток', async () => {
+    const jobs = new MemoryJobs()
+    const response = await post(
+      { analysisId: 'analysis-1', personIds: ['p2'] },
+      dependencies({ renderJobs: jobs }),
+    )
+
+    expect(response.status).toBe(202)
+    const body = (await response.json()) as { id: string }
+    expect(jobs.records.get(body.id)).toMatchObject({
+      kind: 'render',
+      analysisId: 'analysis-1',
+      personIds: ['p2'],
+      sourceMediaId: 'media-from-analysis',
+    })
+  })
+
+  test('без personIds задача уходит в очередь: персонажей выберет воркер', async () => {
+    const jobs = new MemoryJobs()
+    const response = await post({ analysisId: 'analysis-1' }, dependencies({ renderJobs: jobs }))
+    expect(response.status).toBe(202)
+    const body = (await response.json()) as { id: string }
+    expect(jobs.records.get(body.id)?.personIds).toBeUndefined()
+  })
+
+  test('analysisId и sourceMediaId вместе — 400: неясно, какой исходник брать', async () => {
+    const response = await post(
+      { analysisId: 'analysis-1', sourceMediaId: 'media-1' },
+      dependencies(),
+    )
+    expect(response.status).toBe(400)
+  })
+
+  test('personIds без analysisId — 400: проверить их пока не по чему', async () => {
+    const response = await post({ sourceMediaId: 'media-1', personIds: ['p1'] }, dependencies())
+    expect(response.status).toBe(400)
+  })
+
+  test('неготовый разбор — 409, а не задача, которая провалится через минуту', async () => {
+    const response = await post(
+      { analysisId: 'analysis-1' },
+      dependencies({ analyses: analysesWith(doneAnalysis({ status: 'preparing' })) }),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'ANALYSIS_NOT_READY' })
+  })
+
+  test('пустой каталог — 409: пустой person_ids AI-сервис не примет', async () => {
+    const response = await post(
+      { analysisId: 'analysis-1' },
+      dependencies({ analyses: analysesWith(doneAnalysis({ people: [] })) }),
+    )
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'ANALYSIS_HAS_NO_PEOPLE' })
+  })
+
+  test('чужой разбор — 404, как и отсутствующий', async () => {
+    const response = await post(
+      { analysisId: 'analysis-1' },
+      dependencies({ analyses: analysesWith(doneAnalysis({ ownerId: 'user-2' })) }),
+    )
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ code: 'ANALYSIS_NOT_FOUND' })
+  })
+
+  test('негодный выбор персонажей отвергается до очереди', async () => {
+    const cases = [
+      [],
+      ['p1', 'p1'],
+      ['нет-такого'],
+      Array.from({ length: 17 }, (_, index) => `p${index}`),
+    ]
+    for (const personIds of cases) {
+      const response = await post({ analysisId: 'analysis-1', personIds }, dependencies())
+      expect(response.status).toBe(400)
+    }
+  })
+
+  test('без настроенного хранилища разборов отвечает 503', async () => {
+    const response = await post({ analysisId: 'analysis-1' }, dependencies({ analyses: undefined }))
+    expect(response.status).toBe(503)
   })
 })

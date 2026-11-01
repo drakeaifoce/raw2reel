@@ -9,13 +9,27 @@ import { ensureIndexes } from './mongo-indexes'
 
 export type RenderJobStatus = 'queued' | 'rendering' | 'done' | 'failed'
 
+/**
+ * Что делает задача. Оба вида идут через одну очередь намеренно: в AI-сервисе
+ * замок на prepare и render общий, поэтому вторая очередь только спорила бы с
+ * первой за один и тот же слот.
+ */
+export type RenderJobKind = 'prepare' | 'render'
+
 export type RenderJob = {
   id: string
   ownerId: string
+  /** Вид работы. У записей, созданных до появления prepare, его нет. */
+  kind?: RenderJobKind
   sourceMediaId: string
   musicMediaId?: string
-  duration: number
-  captions: boolean
+  /** Разбор исходника: для prepare — что заполнить, для render — что взять. */
+  analysisId?: string
+  /** Выбранные персонажи. Пусто — воркер выберет сам по числу появлений. */
+  personIds?: string[]
+  /** Параметры рендера. У разбора их нет: он от них не зависит. */
+  duration?: number
+  captions?: boolean
   status: RenderJobStatus
   resultMediaId?: string
   error?: string
@@ -39,7 +53,8 @@ export interface RenderJobRepository {
    * означает повторную доставку, и переделывать нечего.
    */
   claim(id: string): Promise<RenderJob | null>
-  finish(id: string, resultMediaId: string): Promise<void>
+  /** Результат есть только у рендера; у prepare он лежит в записи разбора. */
+  finish(id: string, resultMediaId?: string): Promise<void>
   fail(id: string, message: string): Promise<void>
   requeue(id: string): Promise<void>
 }
@@ -85,11 +100,15 @@ export class RenderJobService implements RenderJobRepository {
     return result ?? null
   }
 
-  async finish(id: string, resultMediaId: string): Promise<void> {
+  async finish(id: string, resultMediaId?: string): Promise<void> {
     await this.collection.updateOne(
       { id },
       {
-        $set: { status: 'done', resultMediaId, updatedAt: new Date().toISOString() },
+        $set: {
+          status: 'done',
+          updatedAt: new Date().toISOString(),
+          ...(resultMediaId ? { resultMediaId } : {}),
+        },
         $unset: { error: '' },
       },
     )

@@ -1,5 +1,9 @@
 /**
- * Клиент AI-сервиса: POST /v1/render.
+ * Клиент AI-сервиса: POST /v2/prepare и POST /v2/render.
+ *
+ * Работа разделена на два шага намеренно, это контракт сервиса: prepare по
+ * видео собирает каталог персонажей с превью, render по этому каталогу и
+ * выбранным персонажам собирает ролик. Одношагового /v1/render больше нет.
  *
  * Тело собирается потоком, а не через FormData с буфером: видео допускается до
  * 150 MB, а у контейнера лимит памяти меньше, чем понадобилось бы на пару
@@ -8,33 +12,57 @@
  */
 import type { Config } from './config'
 
-export type RenderSource = {
+export type MediaSource = {
   name: string
   type: string
   body: ReadableStream<Uint8Array>
 }
 
+export type PrepareInput = { video: MediaSource }
+
 export type RenderInput = {
-  video: RenderSource
-  music?: RenderSource
+  video: MediaSource
+  /**
+   * Сырые байты ответа prepare. Именно байты, а не разобранный объект: сервис
+   * сверяет каталог с отпечатком исходника, и лишний цикл разбор-сборка только
+   * создавал бы риск расхождения.
+   */
+  analysis: Uint8Array
+  /** От 1 до 16 идентификаторов из каталога; пустой список сервис не примет. */
+  personIds: string[]
+  music?: MediaSource
   duration: number
   captions: boolean
 }
 
-export type RenderOutcome =
-  /** Готовый mp4 потоком — его сразу можно писать в Blob. */
-  | { status: 'rendered'; body: ReadableStream<Uint8Array> }
-  /** Занят другим рендером: в сервисе один слот. Повторить позже. */
+/** Общие неудачи: одинаковы для обоих маршрутов, различать их незачем. */
+export type AiFailure =
+  /** Занят другой работой: в сервисе один слот на prepare и render. Позже. */
   | { status: 'busy'; retryAfterSeconds: number }
-  /** Негодное медиа или параметры — повторять бессмысленно. */
+  /** Негодное медиа, каталог или параметры — повторять бессмысленно. */
   | { status: 'rejected'; detail: string }
   /** Сервис или Meta недоступны, либо токен не принят — повторить. */
   | { status: 'unavailable'; detail: string }
 
+export type PrepareOutcome =
+  /** JSON с catalog, thumbnails и calls — его целиком хранит бэкенд. */
+  { status: 'prepared'; body: ReadableStream<Uint8Array> } | AiFailure
+
+export type RenderOutcome =
+  /** Готовый mp4 потоком — его сразу можно писать в Blob. */
+  { status: 'rendered'; body: ReadableStream<Uint8Array> } | AiFailure
+
 export interface AiClient {
+  prepare(input: PrepareInput): Promise<PrepareOutcome>
   render(input: RenderInput): Promise<RenderOutcome>
   ping(): Promise<void>
 }
+
+/**
+ * Предел на один запрос. Нужен: без него зависшее соединение держало бы
+ * единственный слот сервиса бесконечно, и очередь стояла бы вся.
+ */
+const REQUEST_TIMEOUT_MS = 30 * 60_000
 
 /**
  * Имя файла приходит от пользователя и попадает в заголовок multipart.
@@ -42,6 +70,11 @@ export interface AiClient {
  * части и подсунуть лишние заголовки.
  */
 const safeFilename = (name: string) => name.replace(/[\r\n"\\]/g, '_').slice(0, 120) || 'upload'
+
+/** Часть тела: текстовое поле или файл. Файл отличает filename в заголовке. */
+type Part =
+  | { kind: 'field'; name: string; value: string | Uint8Array }
+  | { kind: 'file'; name: string; source: MediaSource }
 
 const streamOf = (iterator: AsyncIterator<Uint8Array>) =>
   new ReadableStream<Uint8Array>({
@@ -54,28 +87,24 @@ const streamOf = (iterator: AsyncIterator<Uint8Array>) =>
 
 async function* multipart(
   boundary: string,
-  input: RenderInput,
+  parts: Part[],
 ): AsyncGenerator<Uint8Array, void, unknown> {
   const encoder = new TextEncoder()
-  const fields: Record<string, string> = {
-    duration: String(input.duration),
-    captions: input.captions ? 'true' : 'false',
-    subject_ids: '[]',
-  }
-  for (const [name, value] of Object.entries(fields)) {
+  for (const part of parts) {
+    if (part.kind === 'field') {
+      yield encoder.encode(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${part.name}"\r\n\r\n`,
+      )
+      yield typeof part.value === 'string' ? encoder.encode(part.value) : part.value
+      yield encoder.encode('\r\n')
+      continue
+    }
     yield encoder.encode(
-      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="${part.name}"; filename="${safeFilename(
+        part.source.name,
+      )}"\r\nContent-Type: ${part.source.type || 'application/octet-stream'}\r\n\r\n`,
     )
-  }
-  const files: [string, RenderSource][] = [['video', input.video]]
-  if (input.music) files.push(['music', input.music])
-  for (const [name, source] of files) {
-    yield encoder.encode(
-      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${safeFilename(
-        source.name,
-      )}"\r\nContent-Type: ${source.type || 'application/octet-stream'}\r\n\r\n`,
-    )
-    const reader = source.body.getReader()
+    const reader = part.source.body.getReader()
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
@@ -92,17 +121,19 @@ export class HttpAiClient implements AiClient {
     private readonly token: string,
   ) {}
 
-  async render(input: RenderInput): Promise<RenderOutcome> {
+  /** Общая отправка: успех отдаёт сам ответ, неудачу — размеченный исход. */
+  private async send(path: string, parts: Part[]): Promise<Response | AiFailure> {
     const boundary = `----raw2reel${crypto.randomUUID().replace(/-/g, '')}`
     let response: Response
     try {
-      response = await fetch(new URL('/v1/render', this.baseUrl), {
+      response = await fetch(new URL(path, this.baseUrl), {
         method: 'POST',
         headers: {
           authorization: `Bearer ${this.token}`,
           'content-type': `multipart/form-data; boundary=${boundary}`,
         },
-        body: streamOf(multipart(boundary, input)[Symbol.asyncIterator]()),
+        body: streamOf(multipart(boundary, parts)[Symbol.asyncIterator]()),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         // Обязательно при потоковом теле: иначе запрос не отправится.
         duplex: 'half',
       } as RequestInit & { duplex: 'half' })
@@ -113,7 +144,7 @@ export class HttpAiClient implements AiClient {
       }
     }
 
-    if (response.ok && response.body) return { status: 'rendered', body: response.body }
+    if (response.ok && response.body) return response
 
     const detail = await response.text().catch(() => '')
     if (response.status === 429) {
@@ -123,14 +154,38 @@ export class HttpAiClient implements AiClient {
         retryAfterSeconds: Number.isFinite(header) && header > 0 ? header : 10,
       }
     }
-    // 413 и 422 — про присланное медиа, повтор ничего не изменит.
+    // 413 и 422 — про присланное медиа, каталог или параметры: повтор ничего
+    // не изменит. Сюда же попадает face_catalog_limit.
     if (response.status === 413 || response.status === 422) {
       return { status: 'rejected', detail: detail.slice(0, 500) }
     }
-    // Остальное, включая 401 и 503 model_unconfigured, — наша неполадка или
-    // чужая недоступность: повторяем, и после нескольких попыток задача
+    // Остальное, включая 401, 502 и 503 model_unconfigured, — наша неполадка
+    // или чужая недоступность: повторяем, и после нескольких попыток задача
     // честно становится failed.
     return { status: 'unavailable', detail: `HTTP ${response.status} ${detail.slice(0, 300)}` }
+  }
+
+  async prepare(input: PrepareInput): Promise<PrepareOutcome> {
+    // Ровно одно поле: любое лишнее сервис отвергает с 422.
+    const outcome = await this.send('/v2/prepare', [
+      { kind: 'file', name: 'video', source: input.video },
+    ])
+    return outcome instanceof Response ? { status: 'prepared', body: outcome.body! } : outcome
+  }
+
+  async render(input: RenderInput): Promise<RenderOutcome> {
+    // Набор полей закрыт разбором на стороне сервиса (max_files=2,
+    // max_fields=4), поэтому лишнего здесь быть не должно.
+    const parts: Part[] = [
+      { kind: 'field', name: 'analysis', value: input.analysis },
+      { kind: 'field', name: 'person_ids', value: JSON.stringify(input.personIds) },
+      { kind: 'field', name: 'duration', value: String(input.duration) },
+      { kind: 'field', name: 'captions', value: input.captions ? 'true' : 'false' },
+      { kind: 'file', name: 'video', source: input.video },
+    ]
+    if (input.music) parts.push({ kind: 'file', name: 'music', source: input.music })
+    const outcome = await this.send('/v2/render', parts)
+    return outcome instanceof Response ? { status: 'rendered', body: outcome.body! } : outcome
   }
 
   async ping(): Promise<void> {

@@ -25,6 +25,13 @@ export const MAX_DELIVERIES = 10
 /** Пауза перед повторной доставкой. */
 const RETRY_AFTER_MS = 15_000
 
+/**
+ * Как часто сообщать очереди, что работа идёт. Prepare и render вместе легко
+ * выходят за ack_wait, и без этого сигнала JetStream переотдал бы сообщение
+ * посреди работы, а второй проход начал бы всё заново.
+ */
+const WORKING_INTERVAL_MS = 60_000
+
 /** Исход обработки: от него зависит, что сделать с сообщением. */
 export type QueueOutcome =
   /** Готово — подтверждаем, сообщение уходит из очереди. */
@@ -53,7 +60,8 @@ export class NatsRenderQueue implements RenderQueue {
       durable_name: DURABLE,
       ack_policy: AckPolicy.Explicit,
       max_deliver: MAX_DELIVERIES,
-      // Рендер занимает минуты, поэтому ждать подтверждения надо долго.
+      // Рендер занимает минуты, поэтому ждать подтверждения надо долго; на
+      // время работы воркер продлевает срок сигналом working().
       ack_wait: 15 * 60 * 1_000_000_000,
     }
     try {
@@ -80,11 +88,22 @@ export class NatsRenderQueue implements RenderQueue {
       for await (const message of messages) {
         const jobId = message.string()
         let outcome: QueueOutcome = 'failed'
+        const heartbeat = setInterval(() => {
+          // Сбой самого сигнала не должен ронять обработку: хуже, чем лишняя
+          // переотдача, только потеря уже сделанной работы.
+          try {
+            message.working()
+          } catch (error) {
+            console.warn(`задача ${jobId}: не удалось продлить подтверждение`, error)
+          }
+        }, WORKING_INTERVAL_MS)
         try {
           outcome = await handler(jobId)
         } catch (error) {
           console.error(`задача ${jobId}: необработанная ошибка`, error)
           outcome = 'retry-later'
+        } finally {
+          clearInterval(heartbeat)
         }
         if (outcome === 'done') message.ack()
         else if (outcome === 'retry-later') message.nak(RETRY_AFTER_MS)

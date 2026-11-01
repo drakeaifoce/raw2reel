@@ -14,6 +14,7 @@ export type Config = {
   blobConnectionString: string | undefined
   blobContainerUploads: string
   blobContainerRenders: string
+  blobContainerAnalyses: string
   mediaAllowedTypes: string[]
   maxMediaSizeBytes: number
   aiServiceUrl: string | undefined
@@ -43,7 +44,11 @@ export const config: Config = {
   blobConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   blobContainerUploads: process.env.AZURE_BLOB_CONTAINER_UPLOADS ?? 'uploads',
   blobContainerRenders: process.env.AZURE_BLOB_CONTAINER_RENDERS ?? 'renders',
-  // Адрес внутренний: /v1/render снаружи закрыт, его зовёт только воркер.
+  // Отдельный контейнер под разбор исходника: ответ /v2/prepare весит до 16 MB
+  // и в документ Cosmos (предел 2 MB) не влезает. У контейнера своё правило
+  // жизненного цикла — анализы удаляются через 7 дней.
+  blobContainerAnalyses: process.env.AZURE_BLOB_CONTAINER_ANALYSES ?? 'analyses',
+  // Адрес внутренний: /v2/* снаружи закрыт, их зовёт только воркер.
   aiServiceUrl: process.env.AI_SERVICE_URL,
   aiServiceToken: process.env.AI_SERVICE_TOKEN,
   natsUrl: process.env.NATS_URL,

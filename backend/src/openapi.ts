@@ -106,6 +106,62 @@ export function createOpenAPI() {
         },
       },
     },
+    '/analyses': {
+      post: {
+        summary: 'Queue character discovery for an owned video',
+        description:
+          'Returns immediately with an analysis id: discovery calls cloud models and takes minutes. Poll GET /analyses/{id} until status is done, then render the chosen people.',
+        security: mediaSecurity,
+        requestBody: body({
+          ...object({ sourceMediaId: string }),
+          additionalProperties: false,
+        }),
+        responses: {
+          ...commonErrors,
+          '202': {
+            description: 'Analysis accepted; Location points at the status resource',
+            headers: { Location: { schema: { type: 'string' } } },
+            content: { 'application/json': { schema: ref('Analysis') } },
+          },
+          '404': response('Source media is missing or foreign', ref('Error')),
+        },
+      },
+    },
+
+    '/analyses/{id}': {
+      get: {
+        summary: 'Read an owned analysis and its character cards',
+        security: mediaSecurity,
+        parameters: [parameter('id', 'path')],
+        responses: {
+          ...commonErrors,
+          '200': {
+            description: 'Current state; people are filled once status is done',
+            content: { 'application/json': { schema: ref('Analysis') } },
+          },
+          '404': response('Missing or foreign analysis (indistinguishable)', ref('Error')),
+        },
+      },
+    },
+
+    '/analyses/{id}/people/{personId}/thumbnail': {
+      get: {
+        summary: 'Stream one character preview from an owned analysis',
+        description:
+          'A bounded JPEG, at most 256x256. Previews are served as separate files so polling the analysis stays cheap.',
+        security: mediaSecurity,
+        parameters: [parameter('id', 'path'), parameter('personId', 'path')],
+        responses: {
+          ...commonErrors,
+          '200': {
+            description: 'JPEG bytes. nosniff; CSP default-src none; sandbox.',
+            content: { 'image/jpeg': { schema: { type: 'string', format: 'binary' } } },
+          },
+          '404': response('Missing analysis, person, or preview', ref('Error')),
+        },
+      },
+    },
+
     '/renders': {
       post: {
         summary: 'Queue a reel render for an owned video',
@@ -118,8 +174,21 @@ export function createOpenAPI() {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['sourceMediaId'],
+                description:
+                  'Provide analysisId (optionally with personIds) to render a reviewed catalog, or sourceMediaId alone to let the worker prepare it and pick the most observed people.',
+                oneOf: [{ required: ['analysisId'] }, { required: ['sourceMediaId'] }],
                 properties: {
+                  analysisId: {
+                    type: 'string',
+                    description: 'A done analysis owned by the caller',
+                  },
+                  personIds: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    minItems: 1,
+                    maxItems: 16,
+                    description: 'Catalog ids to keep; requires analysisId. Omitted means all.',
+                  },
                   sourceMediaId: { type: 'string' },
                   musicMediaId: { type: 'string' },
                   duration: {
@@ -143,7 +212,11 @@ export function createOpenAPI() {
             headers: { Location: { schema: { type: 'string' } } },
             content: { 'application/json': { schema: ref('RenderJob') } },
           },
-          '404': response('Source or music media is missing or foreign', ref('Error')),
+          '404': response('Source, music or analysis is missing or foreign', ref('Error')),
+          '409': response(
+            'ANALYSIS_NOT_READY or ANALYSIS_HAS_NO_PEOPLE: nothing to render yet',
+            ref('Error'),
+          ),
         },
       },
     },
@@ -362,16 +435,52 @@ export function createOpenAPI() {
         ...authSchema.schemas,
         Error: object({ error: string, code: string }),
         IdentityError: object({ error: object({ code: string, message: string }) }),
-        RenderJob: object({
-          id: string,
-          status: { type: 'string', enum: ['queued', 'rendering', 'done', 'failed'] },
-          duration: { type: 'number' },
-          captions: { type: 'boolean' },
-          resultMediaId: string,
-          error: string,
-          createdAt: string,
-          updatedAt: string,
-        }),
+        RenderJob: object(
+          {
+            id: string,
+            status: { type: 'string', enum: ['queued', 'rendering', 'done', 'failed'] },
+            duration: { type: 'number' },
+            captions: { type: 'boolean' },
+            musicMediaId: string,
+            analysisId: string,
+            personIds: { type: 'array', items: string },
+            resultMediaId: string,
+            error: string,
+            createdAt: string,
+            updatedAt: string,
+          },
+          ['id', 'status', 'createdAt', 'updatedAt'],
+        ),
+        AnalysisPerson: object(
+          {
+            id: string,
+            label: { ...string, description: 'Anonymous label, never a real name' },
+            observationCount: {
+              type: 'integer',
+              minimum: 0,
+              description: 'How often the person was seen; drives automatic selection',
+            },
+            thumbnailUrl: {
+              ...string,
+              description: 'Relative path to the JPEG preview; absent when none is usable',
+            },
+          },
+          ['id', 'label', 'observationCount'],
+        ),
+        Analysis: object(
+          {
+            id: string,
+            sourceMediaId: string,
+            status: { type: 'string', enum: ['queued', 'preparing', 'done', 'failed'] },
+            people: { type: 'array', items: ref('AnalysisPerson') },
+            sourceDuration: { type: 'number' },
+            warnings: { type: 'array', items: string },
+            error: string,
+            createdAt: string,
+            updatedAt: string,
+          },
+          ['id', 'sourceMediaId', 'status', 'people', 'createdAt', 'updatedAt'],
+        ),
         Media: object({
           id: string,
           name: string,
