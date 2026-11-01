@@ -19,8 +19,14 @@ services:
   backend:
     image: raw2reel/backend:${BACKEND_TAG:?нужен BACKEND_TAG}
     restart: unless-stopped
+    # Переменные разнесены по сервисам: общий файл плюс свой. Ключ Meta лежит
+    # только в ai.env — бэкенду он не нужен, и видеть его он не должен.
     env_file:
       - /opt/raw2reel/secrets/app.env
+      - /opt/raw2reel/secrets/backend.env
+    depends_on:
+      nats:
+        condition: service_healthy
     networks: [edge]
     mem_limit: 384m
 
@@ -29,6 +35,31 @@ services:
     restart: unless-stopped
     env_file:
       - /opt/raw2reel/secrets/app.env
+      - /opt/raw2reel/secrets/ai.env
     networks: [edge]
-    # Предобработка изображений — самый жадный до памяти сервис из трёх
+    # Рендер гоняет ffmpeg, и это самый жадный до памяти сервис
     mem_limit: 640m
+
+  # Очередь задач рендера. JetStream нужен именно персистентный: задача живёт
+  # минуты, и терять её при перезапуске нельзя. Наружу не публикуется — только
+  # внутренняя сеть.
+  nats:
+    image: nats:2-alpine
+    restart: unless-stopped
+    command:
+      - "-js"
+      - "--store_dir=/data"
+      - "--http_port=8222"
+    volumes:
+      - nats-data:/data
+    networks: [edge]
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  nats-data:
