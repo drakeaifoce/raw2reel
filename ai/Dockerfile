@@ -13,6 +13,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 COPY --from=deps /app /app
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app
