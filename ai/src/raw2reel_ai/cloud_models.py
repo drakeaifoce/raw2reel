@@ -42,10 +42,6 @@ class Person(StrictModel):
     observation_ids: list[str] = Field(min_length=1, max_length=512)
 
 
-class People(StrictModel):
-    people: list[Person] = Field(max_length=100)
-
-
 class TranscriptTurn(StrictModel):
     startMs: int = Field(ge=0)
     endMs: int = Field(ge=0)

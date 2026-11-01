@@ -48,7 +48,7 @@ def create_app(
 
     @app.get("/ready")
     def ready(response: Response):
-        result = readiness()
+        result = readiness(settings)
         if not result["ready"]:
             response.status_code = 503
         return result
