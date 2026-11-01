@@ -85,6 +85,13 @@ jobs:
         working-directory: ai
     steps:
       - uses: actions/checkout@v4
+      # Тесты media и cloud_pipeline реально запускают ffmpeg: в образе
+      # AI-сервиса он есть, а в образе раннера — нет, и без него pytest
+      # падает на MediaError «Cannot find executable 'ffmpeg'».
+      - name: установка ffmpeg
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ffmpeg
       - name: установка uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
