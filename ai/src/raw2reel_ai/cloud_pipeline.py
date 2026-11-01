@@ -28,7 +28,7 @@ from .face_filters import FaceFilters
 from .media import MediaTools
 from .meta import MetaClient, MetaError
 from .models import Segment
-from .pipeline import _fingerprint, _has_signal, _write_json
+from .pipeline_io import fingerprint, has_signal, write_json
 from .planning import make_srt, quantize_segments
 from .reframing import portrait_filter, remap_impact
 
@@ -177,7 +177,7 @@ class CloudPipeline:
             if info["has_audio"]:
                 audio = work / "speech.wav"
                 self.tools.extract_audio(source, audio)
-                if _has_signal(audio):
+                if has_signal(audio):
                     raw = self.meta.transcribe(audio)
                     turns = [
                         TranscriptTurn.model_validate(
@@ -186,7 +186,7 @@ class CloudPipeline:
                         for t in raw
                     ]
             catalog = Catalog(
-                source_sha256=_fingerprint(source),
+                source_sha256=fingerprint(source),
                 source_duration=info["duration"],
                 scenes=scenes,
                 observations=observations,
@@ -241,7 +241,7 @@ class CloudPipeline:
         if any(p in inputs or (p.exists() and not overwrite) for p in (output, sidecar)):
             raise ValueError("Output must not replace inputs or existing files")
         catalog, images = read_analysis(analysis)
-        if catalog.source_sha256 != _fingerprint(source):
+        if catalog.source_sha256 != fingerprint(source):
             raise ValueError("Preparation analysis does not match source")
         known = {p.id: p for p in catalog.people}
         if len(set(person_ids)) != len(person_ids) or not set(person_ids) <= known.keys():
@@ -518,7 +518,7 @@ class CloudPipeline:
                 "tracked_seconds": track_seconds,
                 "calls": self.cloud.calls,
             }
-            _write_json(work / "manifest.json", manifest)
+            write_json(work / "manifest.json", manifest)
             (work / "manifest.json").replace(sidecar)
             rendered.replace(output)
         progress("done")

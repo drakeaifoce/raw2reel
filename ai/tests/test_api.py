@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from raw2reel_ai.config import settings
+from raw2reel_ai.config import get_settings
 from raw2reel_ai.main import app
 
 client = TestClient(app)
@@ -15,18 +15,20 @@ def test_health_отвечает_всегда() -> None:
 def test_version_отдаёт_версию_образа() -> None:
     response = client.get("/version")
     assert response.status_code == 200
-    assert response.json() == {"service": "ai", "version": settings.git_sha}
+    assert response.json() == {"service": "ai", "version": get_settings().git_sha}
 
 
 def test_без_git_sha_версия_это_dev() -> None:
     # В образе значение приходит из --build-arg GIT_SHA; локально его нет
-    assert settings.git_sha == "dev"
+    assert get_settings().git_sha == "dev"
 
 
-def test_ready_без_зависимостей_отвечает_200() -> None:
+def test_ready_reports_media_dependencies(monkeypatch):
+    monkeypatch.setattr("raw2reel_ai.health.which", lambda path: path)
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["ready"] is True
+    assert set(response.json()["dependencies"]) == {"ffmpeg", "ffprobe"}
 
 
 def test_legacy_render_route_is_removed():

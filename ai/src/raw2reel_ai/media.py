@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import Settings
 from .models import Segment
+from .reframing import portrait_filter
 
 
 class MediaError(Exception):
@@ -127,29 +128,6 @@ class MediaTools:
         except (ValueError, KeyError, TypeError, StopIteration):
             raise MediaError("This file has no usable media stream or duration.") from None
 
-    def prepare_analysis(self, source: Path, output: Path):
-        # Meta accepts MP4; MOV/rotated sources are normalized and audio is handled by Voice.
-        self.ffmpeg(
-            "-protocol_whitelist",
-            "file,pipe",
-            "-i",
-            str(source),
-            "-an",
-            "-vf",
-            "scale=640:640:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=5,setsar=1",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "27",
-            "-threads",
-            "1",
-            "-movflags",
-            "+faststart",
-            str(output),
-        )
-
     def extract_audio(self, source: Path, output: Path):
         self.ffmpeg(
             "-protocol_whitelist",
@@ -220,20 +198,16 @@ class MediaTools:
         music: Path | None,
         *,
         portrait_filters: list[str] | None = None,
-        impact_start: float | None = None,
+        impact_start: float,
         music_start: float = 0,
     ) -> tuple[Path, dict]:
         outputs = []
-        portrait = (
-            "scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-            "pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
-        )
         if portrait_filters is not None and len(portrait_filters) != len(segments):
             raise ValueError("One portrait filter is required per segment")
         if not math.isfinite(music_start) or music_start < 0:
             raise ValueError("Invalid music offset")
         total_duration = sum(s.end - s.start for s in segments)
-        if impact_start is not None and not 0 <= impact_start < total_duration:
+        if not 0 <= impact_start < total_duration:
             raise ValueError("Invalid impact time")
         for index, segment in enumerate(segments):
             clip = directory / f"cut-{index}.mov"
@@ -264,7 +238,11 @@ class MediaTools:
                 "[audio]" if has_audio else "1:a:0",
                 "-vf",
                 "setpts=PTS-STARTPTS,"
-                + (portrait_filters[index] if portrait_filters is not None else portrait),
+                + (
+                    portrait_filters[index]
+                    if portrait_filters is not None
+                    else portrait_filter(segment, [], [])
+                ),
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -298,27 +276,17 @@ class MediaTools:
         duration = sum(s.end - s.start for s in segments)
         args = ["-i", str(joined)]
         if music:
+            transition = f"clip((t-{impact_start:.6f}+0.25)/0.5,0,1)"
             mix = (
                 "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
-                "asplit=2[voice][sidechain];"
-                "[1:a]loudnorm=I=-20:TP=-2:LRA=11,aresample=48000[music];"
+                f"volume='1-0.82*({transition})':eval=frame,asplit=2[voice][sidechain];"
+                "[1:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
+                f"volume='0.25+0.75*({transition})':eval=frame[music];"
                 "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
                 "attack=15:release=450[ducked];"
                 "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
                 "alimiter=limit=0.89125:level=false:latency=true[a]"
             )
-            if impact_start is not None:
-                transition = f"clip((t-{impact_start:.6f}+0.25)/0.5,0,1)"
-                mix = (
-                    "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
-                    f"volume='1-0.82*({transition})':eval=frame,asplit=2[voice][sidechain];"
-                    "[1:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
-                    f"volume='0.25+0.75*({transition})':eval=frame[music];"
-                    "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
-                    "attack=15:release=450[ducked];"
-                    "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
-                    "alimiter=limit=0.89125:level=false:latency=true[a]"
-                )
             args += [
                 "-stream_loop",
                 "-1",
@@ -362,13 +330,7 @@ class MediaTools:
         ]
         self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
-        info["audio_mix"] = (
-            "two_phase_dialogue_then_music"
-            if music and impact_start is not None
-            else "normalized_foreground_with_ducked_music"
-            if music
-            else "original"
-        )
+        info["audio_mix"] = "two_phase_dialogue_then_music" if music else "original"
         if (
             info["width"] != 720
             or info["height"] != 1280

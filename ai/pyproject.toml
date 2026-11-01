@@ -1,7 +1,7 @@
 [project]
 name = "raw2reel-ai"
 version = "0.0.0"
-description = "Оркестрация Muse-пайплайнов и предобработка изображений"
+description = "Облачный пайплайн эдитов: SAM, Muse Spark, Voice и FFmpeg"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.120",
@@ -9,8 +9,6 @@ dependencies = [
     "httpx>=0.28",
     "pillow>=11.0",
     "pydantic-settings>=2.7",
-    "azure-storage-blob>=12.28",
-    "pymongo>=4.11",
     "python-multipart>=0.0.20,<0.1",
 ]
 
