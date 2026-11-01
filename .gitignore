@@ -17,3 +17,5 @@ Thumbs.db
 
 # Local Claude Code preview config
 .claude/launch.json
+.assets/video/*
+.assets/audio/*
