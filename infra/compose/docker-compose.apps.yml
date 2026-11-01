@@ -40,6 +40,28 @@ services:
     # Рендер гоняет ffmpeg, и это самый жадный до памяти сервис
     mem_limit: 640m
 
+  # Воркер рендера: тот же образ, что у бэкенда, но другая команда. Отдельный
+  # процесс потому, что рендер занимает минуты и делить его с HTTP-сервером
+  # незачем. Один экземпляр: в AI-сервисе глобальный render_lock, второй слот
+  # всё равно не появится.
+  #
+  # HTTP-порта у него нет, поэтому deploy.sh его готовность не проверяет —
+  # смотреть docker compose logs worker.
+  worker:
+    image: raw2reel/backend:${BACKEND_TAG:?нужен BACKEND_TAG}
+    restart: unless-stopped
+    command: ["bun", "src/worker.ts"]
+    env_file:
+      - /opt/raw2reel/secrets/app.env
+      - /opt/raw2reel/secrets/backend.env
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks: [edge]
+    # Результат рендера буферизуется в памяти перед записью в Blob: это готовый
+    # рилс до 30 секунд, единицы мегабайт. Исходник в память не попадает.
+    mem_limit: 512m
+
   # Очередь задач рендера. JetStream нужен именно персистентный: задача живёт
   # минуты, и терять её при перезапуске нельзя. Наружу не публикуется — только
   # внутренняя сеть.

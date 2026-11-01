@@ -106,6 +106,64 @@ export function createOpenAPI() {
         },
       },
     },
+    '/renders': {
+      post: {
+        summary: 'Queue a reel render for an owned video',
+        description:
+          'Returns immediately with a job id: the render itself takes minutes and runs in a worker. Poll GET /renders/{id} for the outcome.',
+        security: mediaSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sourceMediaId'],
+                properties: {
+                  sourceMediaId: { type: 'string' },
+                  musicMediaId: { type: 'string' },
+                  duration: {
+                    type: 'number',
+                    exclusiveMinimum: 0,
+                    maximum: 30,
+                    default: 27,
+                    description: 'Result duration in seconds',
+                  },
+                  captions: { type: 'boolean', default: true },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: {
+          ...commonErrors,
+          '202': {
+            description: 'Job accepted; Location points at the status resource',
+            headers: { Location: { schema: { type: 'string' } } },
+            content: { 'application/json': { schema: ref('RenderJob') } },
+          },
+          '404': response('Source or music media is missing or foreign', ref('Error')),
+        },
+      },
+    },
+
+    '/renders/{id}': {
+      get: {
+        summary: 'Read the state of an owned render job',
+        security: mediaSecurity,
+        parameters: [parameter('id', 'path')],
+        responses: {
+          ...commonErrors,
+          '200': {
+            description: 'Current job state; resultMediaId appears once status is done',
+            content: { 'application/json': { schema: ref('RenderJob') } },
+          },
+          '404': response('Missing or foreign job (indistinguishable)', ref('Error')),
+        },
+      },
+    },
+
     '/media/{id}': {
       get: {
         summary: 'Stream an owned file',
@@ -304,6 +362,16 @@ export function createOpenAPI() {
         ...authSchema.schemas,
         Error: object({ error: string, code: string }),
         IdentityError: object({ error: object({ code: string, message: string }) }),
+        RenderJob: object({
+          id: string,
+          status: { type: 'string', enum: ['queued', 'rendering', 'done', 'failed'] },
+          duration: { type: 'number' },
+          captions: { type: 'boolean' },
+          resultMediaId: string,
+          error: string,
+          createdAt: string,
+          updatedAt: string,
+        }),
         Media: object({
           id: string,
           name: string,

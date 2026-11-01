@@ -2,6 +2,8 @@ import { docsResponse } from './docs'
 import { config } from './config'
 import { readiness } from './health'
 import { createDatabaseService, type DatabaseRepository } from './database'
+import { createRenderQueue, type RenderQueue } from './queue'
+import { createRenderJobService, type RenderJob, type RenderJobRepository } from './render-jobs'
 import { createMediaService, type MediaRepository } from './media'
 import { createAuthService } from './auth'
 import type { IdentityService, Principal, TokenPair } from './identity'
@@ -123,7 +125,15 @@ export type AppDependencies = {
   >
   registration?: RegistrationService
   identityWebOrigins?: string[]
+  renderJobs?: RenderJobRepository
+  renderQueue?: RenderQueue
 }
+
+const defaultRenderJobs = createRenderJobService(config)
+// Очередь подключается лениво: соединение асинхронное, а на уровне модуля
+// ждать его нельзя. Тесты подставляют свою через renderQueue.
+let queueConnection: Promise<RenderQueue | undefined> | undefined
+const defaultRenderQueue = () => (queueConnection ??= createRenderQueue(config))
 
 const defaultAuth = createAuthService(config)
 const defaultMedia = createMediaService(config)
@@ -137,6 +147,7 @@ const defaultDependencies: AppDependencies = {
   identity: defaultIdentity,
   registration: createRegistrationService(config, defaultAuth, defaultIdentity, defaultMedia),
   identityWebOrigins: config.betterAuthTrustedOrigins,
+  renderJobs: defaultRenderJobs,
 }
 
 const error = (message: string, code: string, status: number) =>
@@ -228,6 +239,26 @@ const publicMedia = ({
   size,
   createdAt,
 }: Awaited<ReturnType<MediaRepository['create']>>) => ({ id, name, type, size, createdAt })
+
+const publicJob = ({
+  id,
+  status,
+  duration,
+  captions,
+  resultMediaId,
+  error: failure,
+  createdAt,
+  updatedAt,
+}: RenderJob) => ({
+  id,
+  status,
+  duration,
+  captions,
+  ...(resultMediaId ? { resultMediaId } : {}),
+  ...(failure ? { error: failure } : {}),
+  createdAt,
+  updatedAt,
+})
 
 type SignUpBody = { email: string; password: string; name: string; mode: 'new' | 'upgrade' }
 
@@ -642,7 +673,12 @@ export async function handle(
   }
 
   let mediaPrincipal: { userId: string } | undefined
-  if (pathname === '/media' || pathname.startsWith('/media/')) {
+  if (
+    pathname === '/media' ||
+    pathname.startsWith('/media/') ||
+    pathname === '/renders' ||
+    pathname.startsWith('/renders/')
+  ) {
     const principal = await requireMediaPrincipal(request, dependencies.auth, dependencies.identity)
     if (principal instanceof Response) return principal
     mediaPrincipal = principal
@@ -711,6 +747,92 @@ export async function handle(
         'content-security-policy': "default-src 'none'; sandbox",
       },
     })
+  }
+
+  if (pathname === '/renders' && request.method === 'POST') {
+    if (!dependencies.media)
+      return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    if (!dependencies.renderJobs)
+      return error('render jobs are not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    const queue = dependencies.renderQueue ?? (await defaultRenderQueue())
+    if (!queue) return error('render queue is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return error('JSON body is required', 'INVALID_REQUEST', 400)
+    }
+    if (typeof body !== 'object' || body === null) {
+      return error('JSON body is required', 'INVALID_REQUEST', 400)
+    }
+    const input = body as Record<string, unknown>
+    const sourceMediaId = input.sourceMediaId
+    if (typeof sourceMediaId !== 'string' || sourceMediaId.length === 0) {
+      return error('sourceMediaId is required', 'INVALID_REQUEST', 400)
+    }
+    const musicMediaId = input.musicMediaId
+    if (musicMediaId !== undefined && typeof musicMediaId !== 'string') {
+      return error('musicMediaId must be a string', 'INVALID_REQUEST', 400)
+    }
+    const maxDuration = config.renderMaxDurationSeconds
+    const duration = input.duration === undefined ? 27 : Number(input.duration)
+    if (!Number.isFinite(duration) || duration <= 0 || duration > maxDuration) {
+      return error(`duration must be between 0 and ${maxDuration}`, 'INVALID_REQUEST', 400)
+    }
+    const captions = input.captions === undefined ? true : input.captions
+    if (typeof captions !== 'boolean') {
+      return error('captions must be a boolean', 'INVALID_REQUEST', 400)
+    }
+
+    // Проверяем медиа здесь, а не в воркере: иначе задача гарантированно
+    // провалится через минуту вместо честного 404 сразу.
+    const source = await dependencies.media.get(sourceMediaId, mediaPrincipal!.userId)
+    if (!source) return error('source media was not found', 'MEDIA_NOT_FOUND', 404)
+    await source.body.cancel()
+    if (typeof musicMediaId === 'string') {
+      const music = await dependencies.media.get(musicMediaId, mediaPrincipal!.userId)
+      if (!music) return error('music media was not found', 'MEDIA_NOT_FOUND', 404)
+      await music.body.cancel()
+    }
+
+    const job = await dependencies.renderJobs.create({
+      id: crypto.randomUUID(),
+      ownerId: mediaPrincipal!.userId,
+      sourceMediaId,
+      ...(typeof musicMediaId === 'string' ? { musicMediaId } : {}),
+      duration,
+      captions,
+    })
+    try {
+      await queue.publish(job.id)
+    } catch (failure) {
+      // Запись уже есть, но в очередь не попала — помечаем провалившейся, иначе
+      // она навсегда осталась бы в queued и выглядела как зависшая.
+      await dependencies.renderJobs.fail(
+        job.id,
+        failure instanceof Error ? failure.message : 'не удалось поставить задачу в очередь',
+      )
+      return error('render queue is unavailable', 'DEPENDENCY_UNAVAILABLE', 503)
+    }
+    const response = json(publicJob(job), 202)
+    response.headers.set('location', `/renders/${job.id}`)
+    return response
+  }
+
+  const renderMatch = pathname.match(/^\/renders\/([^/]+)$/)
+  if (renderMatch && request.method === 'GET') {
+    if (!dependencies.renderJobs)
+      return error('render jobs are not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    let id: string
+    try {
+      id = decodeURIComponent(renderMatch[1]!)
+    } catch {
+      return error('render id has invalid URL encoding', 'INVALID_RENDER_ID', 400)
+    }
+    const job = await dependencies.renderJobs.get(id, mediaPrincipal!.userId)
+    if (!job) return error('render job was not found', 'RENDER_NOT_FOUND', 404)
+    return json(publicJob(job))
   }
 
   if (pathname === '/db/hello' && request.method === 'GET') {

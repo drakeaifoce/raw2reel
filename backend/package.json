@@ -10,13 +10,15 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:docs:browser": "bun scripts/docs-browser.ts"
+    "test:docs:browser": "bun scripts/docs-browser.ts",
+    "worker": "bun src/worker.ts"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.28.0",
     "@better-auth/mongo-adapter": "1.7.14",
     "better-auth": "1.7.14",
     "mongodb": "^6.21.0",
+    "nats": "^2.29.3",
     "swagger-ui-dist": "^5.34.0"
   },
   "devDependencies": {

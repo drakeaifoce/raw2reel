@@ -16,6 +16,10 @@ export type Config = {
   blobContainerRenders: string
   mediaAllowedTypes: string[]
   maxMediaSizeBytes: number
+  aiServiceUrl: string | undefined
+  aiServiceToken: string | undefined
+  natsUrl: string | undefined
+  renderMaxDurationSeconds: number
 }
 
 const positiveNumber = (value: string | undefined, fallback: number) => {
@@ -39,6 +43,13 @@ export const config: Config = {
   blobConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
   blobContainerUploads: process.env.AZURE_BLOB_CONTAINER_UPLOADS ?? 'uploads',
   blobContainerRenders: process.env.AZURE_BLOB_CONTAINER_RENDERS ?? 'renders',
+  // Адрес внутренний: /v1/render снаружи закрыт, его зовёт только воркер.
+  aiServiceUrl: process.env.AI_SERVICE_URL,
+  aiServiceToken: process.env.AI_SERVICE_TOKEN,
+  natsUrl: process.env.NATS_URL,
+  // Предел самого AI-сервиса — 30 секунд, держим тот же, чтобы не отправлять
+  // заведомо отвергаемые задачи.
+  renderMaxDurationSeconds: positiveNumber(process.env.RENDER_MAX_DURATION_SECONDS, 30),
   mediaAllowedTypes: (process.env.MEDIA_ALLOWED_TYPES ?? 'video/*,image/*,audio/*')
     .split(',')
     .map((value) => value.trim())

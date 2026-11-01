@@ -1,6 +1,8 @@
 import { BlobServiceClient } from '@azure/storage-blob'
 import { MongoClient } from 'mongodb'
+import { createAiClient } from './ai-client'
 import { config } from './config'
+import { pingQueue } from './queue'
 
 export type DependencyState = 'ok' | 'unconfigured' | 'error'
 
@@ -37,9 +39,35 @@ async function checkBlob(): Promise<{ state: DependencyState; detail?: string }>
   }
 }
 
+async function checkQueue(): Promise<{ state: DependencyState; detail?: string }> {
+  if (!config.natsUrl) return { state: 'unconfigured' }
+  try {
+    await pingQueue(config.natsUrl)
+    return { state: 'ok' }
+  } catch (error) {
+    return { state: 'error', detail: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function checkAiService(): Promise<{ state: DependencyState; detail?: string }> {
+  const client = createAiClient(config)
+  if (!client) return { state: 'unconfigured' }
+  try {
+    await client.ping()
+    return { state: 'ok' }
+  } catch (error) {
+    return { state: 'error', detail: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export async function readiness(): Promise<Readiness> {
-  const [mongo, blob] = await Promise.all([checkMongo(), checkBlob()])
-  const dependencies = { mongo, blob }
+  const [mongo, blob, queue, ai] = await Promise.all([
+    checkMongo(),
+    checkBlob(),
+    checkQueue(),
+    checkAiService(),
+  ])
+  const dependencies = { mongo, blob, queue, ai }
   // Ненастроенная зависимость не делает сервис неготовым: на этом этапе
   // Cosmos ещё не создан, и деплой не должен из-за этого откатываться.
   const ready = Object.values(dependencies).every((d) => d.state !== 'error')

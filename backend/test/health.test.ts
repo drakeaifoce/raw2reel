@@ -5,7 +5,7 @@ describe('readiness', () => {
   test('без настроенных зависимостей сервис считается готовым', async () => {
     const result = await readiness()
     expect(result.ready).toBe(true)
-    expect(Object.keys(result.dependencies).sort()).toEqual(['blob', 'mongo'])
+    expect(Object.keys(result.dependencies).sort()).toEqual(['ai', 'blob', 'mongo', 'queue'])
   })
 
   test('каждая зависимость сообщает своё состояние', async () => {
