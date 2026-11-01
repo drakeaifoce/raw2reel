@@ -1,5 +1,4 @@
 import pytest
-
 import raw2reel_ai.config as config
 from raw2reel_ai.media import MediaError, MediaTools
 

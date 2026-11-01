@@ -1,7 +1,6 @@
 import io
 
 from PIL import Image
-
 from raw2reel_ai.images import normalize
 
 

@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from raw2reel_ai.models import Analysis, Segment
 from raw2reel_ai.planning import choose_segments, make_srt
 

@@ -1,7 +1,6 @@
 from typing import ClassVar
 
 from fastapi.testclient import TestClient
-
 from raw2reel_ai.config import Settings
 from raw2reel_ai.main import create_app
 from raw2reel_ai.media import MediaError

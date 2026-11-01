@@ -12,7 +12,8 @@ from .config import Settings
 from .media import MediaTools
 from .meta import MetaClient
 from .models import Analysis, RenderRequest
-from .planning import align_to_beats, choose_segments, make_srt, quantize_segments
+from .planning import (align_to_beats, choose_segments, make_srt,
+                       quantize_segments)
 
 
 def _fingerprint(path: Path) -> str:

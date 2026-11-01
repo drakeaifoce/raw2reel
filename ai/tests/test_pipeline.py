@@ -8,7 +8,6 @@ import wave
 import httpx
 import pytest
 from pydantic import SecretStr
-
 from raw2reel_ai.config import Settings
 from raw2reel_ai.media import MediaTools
 from raw2reel_ai.meta import MetaClient
@@ -409,7 +408,6 @@ def test_many_short_cuts_do_not_accumulate_timeline_drift(tmp_path, tools):
 
 def test_caption_font_uses_output_pixels_and_safe_bottom_margin(tmp_path, tools):
     from PIL import Image
-
     from raw2reel_ai.models import Segment
 
     source = tmp_path / "black.mp4"
