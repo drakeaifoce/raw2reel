@@ -26,10 +26,10 @@ export function StudioPage() {
         }
       />
       <main className={styles.main}>
-        <GuestRegistration />
         <EditSetup />
         <ReelOutput />
         <MediaList />
+        <GuestRegistration />
       </main>
     </div>
   )
