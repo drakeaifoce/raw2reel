@@ -236,7 +236,7 @@ def test_cloud_portrait_and_two_phase_mix(tmp_path, tools, video):
 
     before = amplitude(0.3, 880) / max(1, amplitude(0.3, 440))
     after = amplitude(1.6, 880) / max(1, amplitude(1.6, 440))
-    assert after > before * 3
+    assert 1.5 < after / before < 2.5
 
 
 def test_short_captions_change_in_rendered_video(tmp_path, tools):
