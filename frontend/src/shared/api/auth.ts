@@ -73,22 +73,30 @@ export const identityClient = {
       body: JSON.stringify(credentials),
     }).then(rememberAccess),
   async signUp(input: { email: string; password: string; name: string; upgrade?: boolean }) {
-    let csrfToken: string | undefined
-    if (input.upgrade) {
-      const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
-      if (!csrf.ok) return csrf
-      csrfToken = ((await csrf.json()) as { csrfToken: string }).csrfToken
+    const attempt = async (upgrade: boolean) => {
+      let csrfToken: string | undefined
+      if (upgrade) {
+        const csrf = await identityRequest('/api/identity/web/csrf', { method: 'POST', body: '{}' })
+        if (!csrf.ok) return csrf
+        csrfToken = ((await csrf.json()) as { csrfToken: string }).csrfToken
+      }
+      return identityRequest('/api/identity/web/sign-up', {
+        method: 'POST',
+        headers: csrfToken ? { 'x-csrf-token': csrfToken } : undefined,
+        body: JSON.stringify({
+          email: input.email,
+          password: input.password,
+          name: input.name,
+          mode: upgrade ? 'upgrade' : 'new',
+        }),
+      })
     }
-    return identityRequest('/api/identity/web/sign-up', {
-      method: 'POST',
-      headers: csrfToken ? { 'x-csrf-token': csrfToken } : undefined,
-      body: JSON.stringify({
-        email: input.email,
-        password: input.password,
-        name: input.name,
-        mode: input.upgrade ? 'upgrade' : 'new',
-      }),
-    }).then(rememberAccess)
+    const response = await attempt(input.upgrade === true)
+    // Only a live session answers mode=new with 409, so the status alone identifies it. Retrying
+    // as a transition keeps the guest's uploads with the new account; without it the form just
+    // reports a generic failure and a guest can never register at all.
+    if (response.status === 409 && !input.upgrade) return attempt(true).then(rememberAccess)
+    return rememberAccess(response)
   },
   startGuest: () =>
     identityRequest('/api/identity/web/guest', { method: 'POST', body: '{}' }).then(rememberAccess),

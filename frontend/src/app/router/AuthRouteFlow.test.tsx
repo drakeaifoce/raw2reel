@@ -131,6 +131,66 @@ describe('identity route flow', () => {
     expect(authClient.$store.atoms.session!.get().data?.user.id).toBe('user-registered')
   })
 
+  // A guest who fills in the registration form holds a live session, and the backend answers
+  // mode=new with 409 for exactly that. Reported from production on 02.11.2026: the form only
+  // showed a generic failure, so a guest could never register at all.
+  test('registers a live guest as a transition when a new account is refused', async () => {
+    const bodies: string[] = []
+    const csrfHeaders: (string | undefined)[] = []
+    let csrfRequests = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.endsWith('/identity/web/csrf')) {
+        csrfRequests += 1
+        return json({ csrfToken: 'csrf-token' })
+      }
+      if (url.endsWith('/identity/web/sign-up')) {
+        bodies.push(String(init?.body))
+        csrfHeaders.push((init?.headers as Record<string, string> | undefined)?.['x-csrf-token'])
+        return bodies.length === 1
+          ? json({ error: { code: 'ACCOUNT_TRANSITION' } }, 409)
+          : json({}, 201)
+      }
+      return json({}, 404)
+    })
+
+    const response = await identityClient.signUp({
+      email: 'new@example.com',
+      password: 'Password1!',
+      name: 'Editor',
+    })
+
+    expect(response.status).toBe(201)
+    expect(bodies).toHaveLength(2)
+    expect(JSON.parse(bodies[0]!).mode).toBe('new')
+    expect(JSON.parse(bodies[1]!).mode).toBe('upgrade')
+    // The transition is CSRF-protected, and the first attempt must not spend a token on it.
+    expect(csrfRequests).toBe(1)
+    expect(csrfHeaders[0]).toBeUndefined()
+    expect(csrfHeaders[1]).toBe('csrf-token')
+  })
+
+  test('does not retry a sign-up that failed for any other reason', async () => {
+    let signupAttempts = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : 'url' in input ? input.url : input.href
+      if (url.endsWith('/identity/web/sign-up')) {
+        signupAttempts += 1
+        return json({ error: 'dependency unavailable' }, 503)
+      }
+      return json({}, 404)
+    })
+
+    const response = await identityClient.signUp({
+      email: 'new@example.com',
+      password: 'Password1!',
+      name: 'Editor',
+    })
+
+    expect(response.status).toBe(503)
+    expect(signupAttempts).toBe(1)
+  })
+
   test.each([
     ['registered', registeredSession, 'Sign in'],
     ['guest', guestSession, 'Continue as guest'],
