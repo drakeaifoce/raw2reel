@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { SignOutLink } from './SignOutLink'
@@ -31,10 +31,14 @@ test('revokes the session, clears editor state and returns to login', async () =
 
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
 
-  await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce())
+  // Ждём перехода, а не факта вызова signOut: вызов происходит до await внутри
+  // обработчика, а сброс состояния и переход — только после него. Ожидание
+  // вызова синхронизировало не то, и проверка страницы входа успевала раньше
+  // перерисовки — тест падал примерно в каждом третьем полном прогоне.
+  expect(await screen.findByText('Login page')).toBeDefined()
+  expect(mocks.signOut).toHaveBeenCalledOnce()
   expect(mocks.resetProject).toHaveBeenCalledOnce()
   expect(mocks.resetReel).toHaveBeenCalledOnce()
-  expect(screen.getByText('Login page')).toBeDefined()
 })
 
 test('keeps local state when the server cannot revoke the session', async () => {
