@@ -27,6 +27,8 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
   return body as T
 }
 
+const FALLBACK_MESSAGE = 'Something went wrong. Try again.'
+
 function errorMessage(body: unknown, status: number) {
   if (status === 401) return 'Your session expired. Sign in again.'
   if (typeof body === 'object' && body !== null) {
@@ -37,5 +39,19 @@ function errorMessage(body: unknown, status: number) {
       if (typeof message === 'string') return message
     }
   }
-  return 'Something went wrong. Try again.'
+  return FALLBACK_MESSAGE
+}
+
+/**
+ * Job `error` fields may carry the AI service's raw JSON body; returns its message,
+ * or the text itself when it is already plain.
+ */
+export function jobErrorMessage(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  try {
+    const message = errorMessage(JSON.parse(raw), 200)
+    return message === FALLBACK_MESSAGE ? raw : message
+  } catch {
+    return raw
+  }
 }

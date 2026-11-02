@@ -1,5 +1,5 @@
 import { facesFromAnalysis } from '@/entities/face/@x/project'
-import { ApiError, createAnalysis, getAnalysis, type Analysis } from '@/shared/api'
+import { ApiError, createAnalysis, getAnalysis, jobErrorMessage, type Analysis } from '@/shared/api'
 import { useProjectStore } from './store'
 
 const POLL_MS = 4000
@@ -40,7 +40,7 @@ export async function analyzeFootage(mediaId: string) {
     if (analysis.status === 'failed') {
       setAnalysis({
         status: 'failed',
-        message: analysis.error ?? 'Muse Vision could not analyse this video.',
+        message: jobErrorMessage(analysis.error) ?? 'Muse Vision could not analyse this video.',
       })
     } else if (analysis.people.length === 0) {
       setAnalysis({ status: 'failed', message: 'Muse Vision found no people in this video.' })

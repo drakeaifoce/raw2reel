@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import { ApiError, createRender, getRender, type CreateRenderInput } from '@/shared/api'
+import {
+  ApiError,
+  createRender,
+  getRender,
+  jobErrorMessage,
+  type CreateRenderInput,
+} from '@/shared/api'
 import type { ReelStage } from './types'
 
 type ReelState = {
@@ -117,7 +123,7 @@ export const useReelStore = create<ReelState & ReelActions>()((set, get) => {
         if (job.status === 'done' && job.resultMediaId) {
           finish({ resultMediaId: job.resultMediaId, duration: job.duration })
         } else {
-          fail(job.error ?? 'The render failed. Try again.')
+          fail(jobErrorMessage(job.error) ?? 'The render failed. Try again.')
         }
       } catch (error) {
         if (!isCurrent()) return

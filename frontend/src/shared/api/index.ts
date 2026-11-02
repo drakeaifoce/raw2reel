@@ -1,5 +1,5 @@
 export { authClient, identityClient } from './auth'
-export { ApiError } from './request'
+export { ApiError, jobErrorMessage } from './request'
 export {
   listMedia,
   uploadMedia,
