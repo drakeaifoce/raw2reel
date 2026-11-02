@@ -108,3 +108,6 @@ function parseJson(text: string): unknown {
     return undefined
   }
 }
+
+/** Streams an owned file; usable directly as `<video src>` or a download link. */
+export const mediaUrl = (id: string) => `/api/media/${encodeURIComponent(id)}`
