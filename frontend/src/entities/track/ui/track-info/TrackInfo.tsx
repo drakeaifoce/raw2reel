@@ -6,7 +6,7 @@ export function TrackInfo({ track }: { track: Track }) {
     <span className={styles.info}>
       <span className={styles.title}>{track.title}</span>
       <span className={styles.meta}>
-        {track.mood} · {track.bpm} BPM
+        {track.bpm ? `${track.mood} · ${track.bpm} BPM` : track.mood}
       </span>
     </span>
   )

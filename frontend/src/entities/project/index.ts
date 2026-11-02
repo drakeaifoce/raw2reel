@@ -1,2 +1,3 @@
-export { useProjectStore } from './model/store'
-export { useMissingRequirement } from './model/selectors'
+export { useProjectStore, type FootageAnalysis } from './model/store'
+export { useMissingRequirement, useSelectedTrack, selectTrack } from './model/selectors'
+export { analyzeFootage } from './model/analysis'

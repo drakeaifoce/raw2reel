@@ -74,3 +74,45 @@
   outline: var(--focus-ring);
   outline-offset: 2px;
 }
+
+.upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1.5px dashed var(--color-border-dashed);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.upload:hover {
+  border-color: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.upload:focus-within {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.error,
+.note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.note {
+  color: var(--color-text-muted);
+}

@@ -39,7 +39,7 @@ export const SAMPLE_VIDEOS: Video[] = [
 
 type UploadedMedia = { id: string; name: string; size: number }
 
-/** Wraps stored media as footage; faces stay mocked until Muse Vision is wired in. */
+/** Wraps stored media as footage; Muse Vision fills in the faces later. */
 export function createUploadedVideo(media: UploadedMedia): Video {
   return {
     id: `upload-${media.id}`,
@@ -47,10 +47,6 @@ export function createUploadedVideo(media: UploadedMedia): Video {
     title: media.name,
     meta: `Your upload · ${formatBytes(media.size)}`,
     tone: '#33313B',
-    faces: [
-      { id: 'a', label: 'Person 1', shots: 'in 27 shots', tone: '#C9B48F' },
-      { id: 'b', label: 'Person 2', shots: 'in 15 shots', tone: '#8FB4D9' },
-      { id: 'c', label: 'Person 3', shots: 'in 5 shots', tone: '#D99F8F' },
-    ],
+    faces: [],
   }
 }

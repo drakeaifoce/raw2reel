@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { analyzeFootage } from '@/entities/project'
 import { createUploadedVideo } from '@/entities/video'
 import { MAX_MEDIA_BYTES, MediaUploadError, uploadMedia } from '@/shared/api'
 import { useSelectFootage } from './useSelectFootage'
@@ -10,7 +11,7 @@ export type FootageUpload =
 
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
-/** Uploads the picked file to media storage and selects it as footage once stored. */
+/** Uploads the picked file, selects it as footage and starts face discovery on it. */
 export function useFootageUpload() {
   const { selectFootage } = useSelectFootage()
   const [upload, setUpload] = useState<FootageUpload>({ status: 'idle' })
@@ -42,6 +43,7 @@ export function useFootageUpload() {
         })
         setUpload({ status: 'idle' })
         selectFootage(createUploadedVideo(media))
+        void analyzeFootage(media.id)
       } catch (error) {
         if (isAbort(error)) return
         const message =

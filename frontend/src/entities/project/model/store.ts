@@ -1,18 +1,34 @@
 import { create } from 'zustand'
+import type { Face } from '@/entities/face/@x/project'
+import type { Track } from '@/entities/track/@x/project'
 import type { Video } from '@/entities/video/@x/project'
+
+/** Muse Vision face discovery for uploaded footage; samples skip it. */
+export type FootageAnalysis =
+  | { status: 'idle' }
+  | { status: 'running' }
+  | { status: 'done'; id: string }
+  | { status: 'failed'; message: string }
 
 type ProjectState = {
   video: Video | null
   faceIds: string[]
   trackId: string | null
+  analysis: FootageAnalysis
+  /** Soundtrack the user uploaded, listed next to the presets. */
+  customTrack: Track | null
 }
 
 type ProjectActions = {
   /** Sets the footage and pre-selects the most prominent face. */
   setVideo: (video: Video) => void
   clearVideo: () => void
+  setAnalysis: (analysis: FootageAnalysis) => void
+  /** Stores faces found by a finished analysis and pre-selects the most visible one. */
+  setDetectedFaces: (analysisId: string, faces: Face[]) => void
   toggleFace: (faceId: string) => void
   selectTrack: (trackId: string) => void
+  setCustomTrack: (track: Track) => void
   reset: () => void
 }
 
@@ -20,18 +36,29 @@ const initialState: ProjectState = {
   video: null,
   faceIds: [],
   trackId: null,
+  analysis: { status: 'idle' },
+  customTrack: null,
 }
+
+const firstFaceIds = (faces: Face[]) => (faces[0] ? [faces[0].id] : [])
 
 /** Client-side edit setup: footage, faces to keep in frame and soundtrack. */
 export const useProjectStore = create<ProjectState & ProjectActions>()((set) => ({
   ...initialState,
 
-  setVideo: (video) => {
-    const firstFace = video.faces[0]
-    set({ video, faceIds: firstFace ? [firstFace.id] : [] })
-  },
+  setVideo: (video) =>
+    set({ video, faceIds: firstFaceIds(video.faces), analysis: { status: 'idle' } }),
 
-  clearVideo: () => set({ video: null, faceIds: [] }),
+  clearVideo: () => set({ video: null, faceIds: [], analysis: { status: 'idle' } }),
+
+  setAnalysis: (analysis) => set({ analysis }),
+
+  setDetectedFaces: (analysisId, faces) =>
+    set((state) => ({
+      video: state.video && { ...state.video, faces },
+      faceIds: firstFaceIds(faces),
+      analysis: { status: 'done', id: analysisId },
+    })),
 
   toggleFace: (faceId) =>
     set((state) => ({
@@ -41,6 +68,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>()((set) => 
     })),
 
   selectTrack: (trackId) => set({ trackId }),
+
+  setCustomTrack: (track) => set({ customTrack: track, trackId: track.id }),
 
   reset: () => set(initialState),
 }))

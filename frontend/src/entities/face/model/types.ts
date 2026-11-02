@@ -4,6 +4,8 @@ export type Face = {
   label: string
   /** Human-readable appearance count, e.g. "in 41 shots". */
   shots: string
-  /** Placeholder avatar tint until real thumbnails are available. */
+  /** Avatar tint, shown behind the preview or instead of it. */
   tone: string
+  /** Face crop from the footage, when Muse Vision produced one. */
+  thumbnailUrl?: string
 }
