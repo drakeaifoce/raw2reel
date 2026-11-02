@@ -3,7 +3,8 @@ import type { PipelineStep, PipelineStepStatus } from './types'
 
 type PipelineParams = {
   faceCount: number
-  bpm: number
+  /** Tempo of the soundtrack, when known. */
+  bpm?: number
 }
 
 export function buildPipelineSteps({ faceCount, bpm }: PipelineParams): PipelineStep[] {
@@ -15,7 +16,12 @@ export function buildPipelineSteps({ faceCount, bpm }: PipelineParams): Pipeline
     },
     { agent: 'Muse Voice', text: 'transcribing speech into word-timed captions' },
     { agent: 'Muse Spark', text: 'reading the story and choosing a hook for the first 2 seconds' },
-    { agent: 'Muse Spark', text: `mapping the beat grid at ${bpm} BPM and cutting on downbeats` },
+    {
+      agent: 'Muse Spark',
+      text: bpm
+        ? `mapping the beat grid at ${bpm} BPM and cutting on downbeats`
+        : 'mapping the beat grid and cutting on downbeats',
+    },
     { agent: 'Render', text: 'reframing to 9:16, burning in captions, mixing audio' },
   ]
 }

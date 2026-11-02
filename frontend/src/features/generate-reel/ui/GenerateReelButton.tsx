@@ -3,16 +3,18 @@ import { useMissingRequirement } from '@/entities/project'
 import { useReelStore } from '@/entities/reel'
 import { Button } from '@/shared/ui/button'
 import { SparklesIcon } from '@/shared/ui/icon'
+import { useGenerateReel } from '../model/useGenerateReel'
 import styles from './GenerateReelButton.module.css'
 
 export function GenerateReelButton() {
   const missing = useMissingRequirement()
   const stage = useReelStore((state) => state.stage)
-  const start = useReelStore((state) => state.start)
+  const generate = useGenerateReel()
   const hintId = useId()
 
   const hint = missing ?? (stage === 'generating' ? 'Editing in progress…' : null)
-  const label = stage === 'done' ? 'Generate again' : 'Generate reel'
+  const label =
+    stage === 'done' ? 'Generate again' : stage === 'failed' ? 'Try again' : 'Generate reel'
 
   return (
     <div className={styles.wrapper}>
@@ -22,7 +24,7 @@ export function GenerateReelButton() {
         fullWidth
         disabled={hint !== null}
         aria-describedby={hint ? hintId : undefined}
-        onClick={() => start()}
+        onClick={generate}
       >
         {hint === null && <SparklesIcon size={18} />}
         {label}

@@ -1,4 +1,4 @@
-export type ReelStage = 'idle' | 'generating' | 'done'
+export type ReelStage = 'idle' | 'generating' | 'done' | 'failed'
 
 /** One stage of the Muse editing pipeline shown while a reel renders. */
 export type PipelineStep = {

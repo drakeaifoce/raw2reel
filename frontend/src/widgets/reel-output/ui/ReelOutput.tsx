@@ -1,4 +1,5 @@
 import { useReelStore } from '@/entities/reel'
+import { FailedState } from './FailedState'
 import { GeneratingState } from './GeneratingState'
 import { IdleState } from './IdleState'
 import { ResultState } from './ResultState'
@@ -13,6 +14,7 @@ export function ReelOutput() {
       {stage === 'idle' && <IdleState />}
       {stage === 'generating' && <GeneratingState />}
       {stage === 'done' && <ResultState />}
+      {stage === 'failed' && <FailedState />}
     </section>
   )
 }
