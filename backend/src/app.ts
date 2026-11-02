@@ -109,6 +109,7 @@ export type AppDependencies = {
     IdentityService,
     | 'authenticateAccess'
     | 'registerGuest'
+    | 'resumeGuest'
     | 'registerRegistered'
     | 'refresh'
     | 'refreshCsrfToken'
@@ -441,8 +442,24 @@ export async function handle(
         return identityError('ORIGIN_REJECTED', 403)
       }
       if (request.headers.has('authorization')) return identityError('INVALID_REQUEST', 400)
-      if (await dependencies.auth.getSession(request.headers)) {
-        return identityError('SESSION_EXISTS', 409)
+      const current = await dependencies.auth.getSession(request.headers)
+      if (current) {
+        if (!(await isEmptyJson(request))) return identityError('INVALID_REQUEST', 400)
+        // Сессия жива, а токенов у клиента нет — после перезагрузки страницы он
+        // их не помнит. Отдаём новую пару тому же гостю: отказ был тупиком, из
+        // которого выходили чисткой cookie, а это новый гость и потерянные
+        // загрузки. Настоящую учётную запись в гостя не превращаем.
+        const resumed =
+          current.user.isAnonymous && current.sessionToken && dependencies.identity
+            ? await dependencies.identity.resumeGuest(current.user.id, current.sessionToken)
+            : null
+        if (!resumed) return identityError('SESSION_EXISTS', 409)
+        const response = json(webTokenBody(resumed), 200)
+        response.headers.append(
+          'set-cookie',
+          refreshCookie(resumed.refreshToken, resumed.refreshExpiresAt),
+        )
+        return response
       }
     } else {
       const rejected = rejectApiBrowserTransport(request)

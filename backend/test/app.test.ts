@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { handle, type AppDependencies } from '../src/app'
+import { handle, type AppDependencies, type AuthSession } from '../src/app'
 import { config } from '../src/config'
 import { createOpenAPI } from '../src/openapi'
 import type { OpenAPIV3_1 } from 'openapi-types'
@@ -189,10 +189,9 @@ describe('/identity/api transport boundary', () => {
 })
 
 describe('/identity guest entry', () => {
-  const guestAuth = (existing = false) => ({
+  const guestAuth = (existing: AuthSession | null = null) => ({
     handler: async () => new Response('unused'),
-    getSession: async () =>
-      existing ? { user: { id: 'existing-guest', isAnonymous: true } } : null,
+    getSession: async () => existing,
     createGuest: async () => ({
       status: 'created' as const,
       session: {
@@ -261,7 +260,7 @@ describe('/identity guest entry', () => {
     })
   })
 
-  test('uses HttpOnly refresh transport for web and rejects an existing session', async () => {
+  test('uses HttpOnly refresh transport for web', async () => {
     const origin = 'https://raw2reel.studio'
     const identity = new IdentityService(new MemoryIdentityStore())
     const response = await handle(
@@ -279,16 +278,87 @@ describe('/identity guest entry', () => {
       refreshTransport: 'cookie',
       user: { id: 'guest-issued', isAnonymous: true },
     })
+  })
 
-    const conflict = await handle(
+  /**
+   * Клиент не помнит токены после перезагрузки страницы и просит нового гостя,
+   * держа живую сессию. Отказ был тупиком: выходили чисткой cookie, получая
+   * нового гостя и теряя доступ к своим загрузкам. Жалоба из Telegram
+   * 02.11.2026 — шесть отказов подряд.
+   */
+  test('continues the same guest when the session is alive but tokens are gone', async () => {
+    const origin = 'https://raw2reel.studio'
+    const identity = new IdentityService(new MemoryIdentityStore())
+    await identity.registerGuest('existing-guest', 'better-auth-session-secret')
+
+    const response = await handle(
       new Request('http://localhost/identity/web/guest', {
         method: 'POST',
         headers: { origin, 'content-type': 'application/json' },
         body: '{}',
       }),
-      { auth: guestAuth(true), identity, identityWebOrigins: [origin] },
+      {
+        auth: guestAuth({
+          user: { id: 'existing-guest', isAnonymous: true },
+          sessionToken: 'better-auth-session-secret',
+        }),
+        identity,
+        identityWebOrigins: [origin],
+      },
     )
-    expect(conflict.status).toBe(409)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('set-cookie')).toContain('__Host-r2r-refresh=')
+    const body = (await response.json()) as { accessToken: string; user: { id: string } }
+    // Тот же гость, а не новый: иначе прежние загрузки остались бы без хозяина.
+    expect(body.user.id).toBe('existing-guest')
+    // Токен настоящий, а не просто поле в ответе.
+    expect(await identity.authenticateAccess(body.accessToken)).toMatchObject({
+      userId: 'existing-guest',
+    })
+  })
+
+  test('refuses to turn a registered session into a guest', async () => {
+    const origin = 'https://raw2reel.studio'
+    const identity = new IdentityService(new MemoryIdentityStore())
+    await identity.registerRegistered('real-account', 'better-auth-session-secret')
+
+    const response = await handle(
+      new Request('http://localhost/identity/web/guest', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      {
+        auth: guestAuth({
+          user: { id: 'real-account', isAnonymous: false },
+          sessionToken: 'better-auth-session-secret',
+        }),
+        identity,
+        identityWebOrigins: [origin],
+      },
+    )
+    expect(response.status).toBe(409)
+  })
+
+  test('refuses a session whose identity is unknown or revoked', async () => {
+    const origin = 'https://raw2reel.studio'
+    const response = await handle(
+      new Request('http://localhost/identity/web/guest', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      {
+        auth: guestAuth({
+          user: { id: 'нет-такого-гостя', isAnonymous: true },
+          sessionToken: 'better-auth-session-secret',
+        }),
+        identity: new IdentityService(new MemoryIdentityStore()),
+        identityWebOrigins: [origin],
+      },
+    )
+    expect(response.status).toBe(409)
   })
 })
 

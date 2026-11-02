@@ -246,6 +246,26 @@ export class IdentityService {
     return created.pair
   }
 
+  /**
+   * Новая пара токенов гостю, который уже существует.
+   *
+   * Нужна, когда у браузера сессия жива, а токенов на руках нет: после
+   * перезагрузки страницы клиент их не помнит и просит нового гостя. Создать
+   * второго владельца нельзя, а отказ загонял клиента в тупик — он чистил
+   * cookie, получал нового гостя и терял доступ к собственным загрузкам.
+   *
+   * Возвращает null, если владельца нет или он больше не активный гость:
+   * выдавать токены по чужой или отозванной сессии нельзя.
+   */
+  async resumeGuest(userId: string, sessionToken: string): Promise<TokenPair | null> {
+    const now = this.now().getTime()
+    const existing = await this.store.findOwner(userId)
+    if (!existing || existing.kind !== 'guest' || existing.state !== 'active') return null
+    const created = await this.newFamily(existing, now, sessionToken)
+    await this.store.createFamily(created.family)
+    return created.pair
+  }
+
   async registerRegistered(userId: string, sessionToken: string): Promise<TokenPair> {
     const now = this.now().getTime()
     const existing = await this.store.findOwner(userId)
