@@ -236,4 +236,38 @@ def test_cloud_portrait_and_two_phase_mix(tmp_path, tools, video):
 
     before = amplitude(0.3, 880) / max(1, amplitude(0.3, 440))
     after = amplitude(1.6, 880) / max(1, amplitude(1.6, 440))
-    assert after > before * 3
+    assert 1.5 < after / before < 2.5
+
+
+def test_short_captions_change_in_rendered_video(tmp_path, tools):
+    from PIL import Image, ImageChops
+
+    from raw2reel_ai.models import Segment
+    from raw2reel_ai.planning import make_srt
+
+    source = tmp_path / "black.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:size=720x1280:rate=30:duration=2",
+        "-an",
+        "-c:v",
+        "libx264",
+        str(source),
+    )
+    segments = [Segment(start=0, end=2, reason="captions", subject_ids=[])]
+    srt = make_srt(
+        [{"startMs": 0, "endMs": 2000, "transcript": "ONE TWO THREE FOUR FIVE SIX"}], segments
+    )
+    rendered, _ = tools.render(source, segments, tmp_path, srt, False, None, impact_start=0)
+    frames = []
+    for i, time in enumerate((0.5, 1.5)):
+        path = tmp_path / f"caption-{i}.png"
+        tools.ffmpeg("-ss", str(time), "-i", str(rendered), "-frames:v", "1", str(path))
+        with Image.open(path) as image:
+            ink = image.convert("L").point(lambda value: 255 if value > 200 else 0)
+            bounds = ink.getbbox()
+            assert bounds is not None and bounds[3] - bounds[1] <= 45
+            frames.append(ink.copy())
+    assert ImageChops.difference(*frames).getbbox() is not None

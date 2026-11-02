@@ -281,7 +281,7 @@ class MediaTools:
                 "[0:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
                 f"volume='1-0.82*({transition})':eval=frame,asplit=2[voice][sidechain];"
                 "[1:a]loudnorm=I=-16:TP=-2:LRA=11,aresample=48000,"
-                f"volume='0.25+0.75*({transition})':eval=frame[music];"
+                f"volume='0.25+0.25*({transition})':eval=frame[music];"
                 "[music][sidechain]sidechaincompress=threshold=0.035:ratio=6:"
                 "attack=15:release=450[ducked];"
                 "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"

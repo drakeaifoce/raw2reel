@@ -30,3 +30,83 @@ def test_captions_are_clipped_and_remapped_across_reordered_cuts():
 
 def test_no_word_timing_or_captions_invented_for_silence():
     assert make_srt([], [Segment(start=0, end=2, reason="a", subject_ids=[])]) == ""
+
+
+def test_captions_change_every_two_or_three_words():
+    segment = Segment(start=0, end=6, reason="speech", subject_ids=[])
+    srt = make_srt(
+        [
+            {
+                "startMs": 0,
+                "endMs": 6000,
+                "transcript": "one two three four five six seven eight nine",
+            }
+        ],
+        [segment],
+    )
+    cues = srt.split("\n\n")
+    assert [c.splitlines()[2] for c in cues] == [
+        "one two three",
+        "four five six",
+        "seven eight nine",
+    ]
+    assert cues[0].splitlines()[1] == "00:00:00,000 --> 00:00:02,000"
+    assert cues[-1].splitlines()[1] == "00:00:04,000 --> 00:00:06,000"
+
+
+def test_captions_split_before_clipping_and_reordering():
+    srt = make_srt(
+        [
+            {
+                "startMs": 0,
+                "endMs": 6000,
+                "transcript": "one two three four five six seven eight nine",
+            }
+        ],
+        [
+            Segment(start=4, end=6, reason="last", subject_ids=[]),
+            Segment(start=0, end=2, reason="first", subject_ids=[]),
+        ],
+    )
+    cues = srt.split("\n\n")
+    assert [c.splitlines()[2] for c in cues] == ["seven eight nine", "one two three"]
+    assert cues[1].splitlines()[1] == "00:00:02,000 --> 00:00:04,000"
+
+
+def test_long_words_do_not_make_multiline_paragraphs():
+    text = "extraordinarily complicated conversations " + "x" * 60
+    srt = make_srt(
+        [{"startMs": 0, "endMs": 6000, "transcript": text}],
+        [Segment(start=0, end=6, reason="speech", subject_ids=[])],
+    )
+    for cue in srt.split("\n\n"):
+        assert len(cue.splitlines()[2]) <= 26
+        assert len(cue.splitlines()[2].split()) <= 3
+
+
+def test_four_words_are_balanced_into_two_short_cues():
+    srt = make_srt(
+        [{"startMs": 0, "endMs": 2000, "transcript": "one two three four"}],
+        [Segment(start=0, end=2, reason="speech", subject_ids=[])],
+    )
+    assert [c.splitlines()[2] for c in srt.split("\n\n")] == ["one two", "three four"]
+
+
+def test_overlapping_speakers_do_not_stack_caption_blocks():
+    srt = make_srt(
+        [
+            {"startMs": 0, "endMs": 2000, "transcript": "first speaker"},
+            {"startMs": 1000, "endMs": 3000, "transcript": "second speaker"},
+        ],
+        [Segment(start=0, end=3, reason="dialogue", subject_ids=[])],
+    )
+    assert "00:00:00,000 --> 00:00:01,000" in srt
+    assert "00:00:01,000 --> 00:00:03,000" in srt
+
+
+def test_caption_blocks_respect_sentence_endings():
+    srt = make_srt(
+        [{"startMs": 0, "endMs": 3000, "transcript": "Вот, здравствуйте. А вы нигде не"}],
+        [Segment(start=0, end=3, reason="speech", subject_ids=[])],
+    )
+    assert srt.split("\n\n")[0].splitlines()[2] == "Вот, здравствуйте."
