@@ -23,6 +23,57 @@ class MemoryOperations implements RegistrationOperationRepository {
 }
 
 describe('registration orchestration', () => {
+  /**
+   * Заголовки нужны лимитеру Better Auth: по ним он определяет адрес. Проверяем
+   * оба вызова — и саму регистрацию, и восстановительный вход: раньше второй
+   * звался с пустыми Headers, то есть мимо адреса так же, как первый.
+   */
+  test('hands client headers to both the sign-up and the recovery sign-in', async () => {
+    const seen: Record<string, string | null> = {}
+    const registration = new RegistrationOrchestrator(
+      new MemoryOperations(),
+      {
+        signUpEmail: async (headers) => {
+          seen.signUp = headers.get('x-forwarded-for')
+          return null
+        },
+        signInEmail: async (headers) => {
+          seen.signIn = headers.get('x-forwarded-for')
+          return {
+            user: {
+              id: 'registered-c',
+              isAnonymous: false as const,
+              registrationOperationId: 'op-headers',
+            },
+            sessionToken: 'registered-session',
+            sessionCookie: 'session=registered',
+          }
+        },
+      },
+      {
+        registerRegistered: async () => ({}) as never,
+        completeUpgrade: async () => true,
+      },
+      {
+        create: async () => ({}) as never,
+        get: async () => null,
+        list: async () => [],
+        transferOwner: async () => 0,
+      },
+    )
+
+    await registration.signUp({
+      email: 'new@example.com',
+      password: 'Password1!',
+      name: 'Editor',
+      mode: 'new',
+      operationId: 'op-headers',
+      headers: new Headers({ 'x-forwarded-for': '203.0.113.9' }),
+    })
+
+    expect(seen).toEqual({ signUp: '203.0.113.9', signIn: '203.0.113.9' })
+  })
+
   test('persists the account, transfers only guest media, and completes the upgrade', async () => {
     const operations = new MemoryOperations()
     const events: string[] = []

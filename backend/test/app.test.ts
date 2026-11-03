@@ -694,6 +694,35 @@ describe('/identity sign-up transport', () => {
     expect(await identity.authenticateAccess(pair.accessToken)).toBeNull()
   })
 
+  /**
+   * Лимитер Better Auth определяет адрес по заголовкам запроса. Пока они сюда
+   * не доходили, все регистрации мира попадали в один счётчик `no-trusted-ip`
+   * — десять на 15 минут на всех; такой ключ наблюдался в базе 01.11.2026.
+   */
+  test('passes client headers into registration so the limiter sees an address', async () => {
+    let received: Parameters<NonNullable<AppDependencies['registration']>['signUp']>[0] | undefined
+    const response = await handle(
+      new Request('http://localhost/identity/api/sign-up', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
+        body: JSON.stringify({ ...credentials, mode: 'new' }),
+      }),
+      {
+        // Маршруты /identity/* требуют identity даже там, где он не нужен по сути.
+        identity: new IdentityService(new MemoryIdentityStore()),
+        registration: {
+          signUp: async (input) => {
+            received = input
+            return completedRegistration()
+          },
+        },
+      },
+    )
+
+    expect(response.status).toBe(200)
+    expect(received?.headers?.get('x-forwarded-for')).toBe('203.0.113.9')
+  })
+
   test('uses HttpOnly refresh continuity, exact Origin and CSRF for web upgrade', async () => {
     const { identity, pair } = await identityFixture()
     const cookie = `__Host-r2r-refresh=${pair.refreshToken}`

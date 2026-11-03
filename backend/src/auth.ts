@@ -189,18 +189,20 @@ export function createAuthServiceWithDatabase(
         sessionCookie,
       }
     },
-    signUpEmail: async (input) => {
-      // ИЗВЕСТНОЕ СЛЕДСТВИЕ: клиентские заголовки сюда не доходят, потому что
-      // RegistrationService зовёт signUpEmail без них. Без X-Forwarded-For
-      // лимитер не определяет адрес и складывает ВСЕ регистрации в один
-      // счётчик `no-trusted-ip` — десять на 15 минут на весь мир. Такой ключ
-      // наблюдался в базе 01.11.2026. Починка требует протащить заголовки
-      // через RegistrationService.register и acceptRegistration — отдельная
-      // правка, здесь не делается.
+    signUpEmail: async (headers, input) => {
+      // Заголовки клиента нужны лимитеру: по ним он определяет адрес. Пока их
+      // не передавали, все регистрации мира попадали в один счётчик
+      // `no-trusted-ip` — десять на 15 минут на всех; такой ключ наблюдался в
+      // базе 01.11.2026.
+      const requestHeaders = new Headers(headers)
+      requestHeaders.set('content-type', 'application/json')
+      // Origin задаём свой намеренно: у запросов через API-транспорт его нет
+      // вовсе, и без подстановки Better Auth отверг бы регистрацию.
+      requestHeaders.set('origin', baseUrl.origin)
       const response = await auth.handler(
         new Request(new URL('/api/auth/sign-up/email', baseUrl.origin).toString(), {
           method: 'POST',
-          headers: { 'content-type': 'application/json', origin: baseUrl.origin },
+          headers: requestHeaders,
           body: JSON.stringify(input),
         }),
       )

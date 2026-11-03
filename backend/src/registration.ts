@@ -83,7 +83,8 @@ export class RegistrationOrchestrator implements RegistrationService {
     let session: RegisteredAuthSession | undefined
     let tokens: TokenPair | undefined
     if (operation.state === 'started') {
-      const created = await this.auth.signUpEmail?.({
+      const headers = input.headers ?? new Headers()
+      const created = await this.auth.signUpEmail?.(headers, {
         email: input.email,
         password: input.password,
         name: input.name,
@@ -95,7 +96,7 @@ export class RegistrationOrchestrator implements RegistrationService {
       const account =
         created ??
         (await this.auth
-          .signInEmail?.(new Headers(), credentials)
+          .signInEmail?.(headers, credentials)
           .then((recovered) =>
             recovered?.user.registrationOperationId === operationId ? recovered : null,
           ))

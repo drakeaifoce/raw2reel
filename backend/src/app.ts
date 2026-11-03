@@ -52,12 +52,15 @@ export interface AuthService {
     headers: Headers,
     input: { email: string; password: string },
   ): Promise<RegisteredAuthSession | null>
-  signUpEmail?(input: {
-    email: string
-    password: string
-    name: string
-    registrationOperationId: string
-  }): Promise<RegisteredAuthSession | null>
+  signUpEmail?(
+    headers: Headers,
+    input: {
+      email: string
+      password: string
+      name: string
+      registrationOperationId: string
+    },
+  ): Promise<RegisteredAuthSession | null>
   signOut?(headers: Headers): Promise<Response>
 }
 
@@ -68,6 +71,11 @@ export type RegistrationInput = {
   mode: 'new' | 'upgrade'
   operationId?: string
   guest?: Principal
+  /**
+   * Заголовки исходного запроса. Нужны лимитеру Better Auth: без них он не
+   * видит адрес и складывает все регистрации в один счётчик на весь мир.
+   */
+  headers?: Headers
 }
 
 export interface RegistrationService {
@@ -329,12 +337,14 @@ const readSignUpBody = async (request: Request): Promise<SignUpBody | undefined>
 
 const acceptRegistration = async (
   registration: RegistrationService,
+  headers: Headers,
   body: SignUpBody,
   guest?: { operationId: string; principal: Principal },
   web = false,
 ) => {
   const result = await registration.signUp({
     ...body,
+    headers,
     ...(guest ? { operationId: guest.operationId, guest: guest.principal } : {}),
   })
   const response = json(
@@ -604,7 +614,7 @@ export async function handle(
           : Boolean(await dependencies.identity!.authenticateAccess(credential))
         return identityError(valid ? 'ACCOUNT_TRANSITION' : 'INVALID_CREDENTIAL', valid ? 409 : 401)
       }
-      return acceptRegistration(dependencies.registration, body, undefined, isWeb)
+      return acceptRegistration(dependencies.registration, request.headers, body, undefined, isWeb)
     }
 
     if (isWeb) {
@@ -625,6 +635,7 @@ export async function handle(
       }
       return acceptRegistration(
         dependencies.registration,
+        request.headers,
         body,
         { operationId: claim.operationId, principal: claim.principal },
         true,
@@ -642,7 +653,7 @@ export async function handle(
         ? identityError('INVALID_CREDENTIAL', 401)
         : identityError('ACCOUNT_TRANSITION', 409)
     }
-    return acceptRegistration(dependencies.registration, body, {
+    return acceptRegistration(dependencies.registration, request.headers, body, {
       operationId: claim.operationId,
       principal: claim.principal,
     })
