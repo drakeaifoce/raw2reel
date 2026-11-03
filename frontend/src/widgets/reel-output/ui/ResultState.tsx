@@ -8,6 +8,7 @@ import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
 import { CheckIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
+import { useMediaSource } from '../model/useMediaSource'
 import { usePlaybackMock } from '../model/usePlaybackMock'
 import styles from './ResultState.module.css'
 import layout from './StageLayout.module.css'
@@ -25,6 +26,9 @@ export function ResultState() {
   const track = useSelectedTrack()
   const resultMediaId = useReelStore((state) => state.resultMediaId)
   const duration = useReelStore((state) => state.duration)
+  const media = useMediaSource(resultMediaId)
+  // Until the reel is buffered, download straight from the stream.
+  const downloadHref = media?.loading && resultMediaId ? mediaUrl(resultMediaId) : media?.src
 
   const summary = [
     `${formatDuration(duration ?? MOCK_DURATION_SEC)} · 9:16`,
@@ -37,16 +41,22 @@ export function ResultState() {
 
   return (
     <div className={layout.layout}>
-      {resultMediaId ? (
+      {media ? (
         <PhoneFrame width={280} tone={video?.tone}>
-          <video
-            className={styles.video}
-            src={mediaUrl(resultMediaId)}
-            controls
-            playsInline
-            preload="metadata"
-            aria-label="Generated reel"
-          />
+          {media.loading ? (
+            <p className={styles.loading} role="status">
+              Loading your reel…
+            </p>
+          ) : (
+            <video
+              className={styles.video}
+              src={media.src}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label="Generated reel"
+            />
+          )}
         </PhoneFrame>
       ) : (
         <MockPreview tone={video?.tone} />
@@ -77,7 +87,7 @@ export function ResultState() {
         )}
 
         <div className={styles.actions}>
-          <DownloadReelButton mediaId={resultMediaId} className={styles.primaryAction} />
+          <DownloadReelButton href={downloadHref} className={styles.primaryAction} />
           <RestartReelButton className={styles.secondaryAction} />
         </div>
         <p className={styles.note}>
