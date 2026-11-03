@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useProjectStore, useSelectedTrack } from '@/entities/project'
 import { BeatGrid, MOCK_BEAT_SEGMENTS, useReelStore } from '@/entities/reel'
 import { DownloadReelButton } from '@/features/download-reel'
@@ -25,13 +26,15 @@ export function ResultState() {
   const faceCount = useProjectStore((state) => state.faceIds.length)
   const track = useSelectedTrack()
   const resultMediaId = useReelStore((state) => state.resultMediaId)
-  const duration = useReelStore((state) => state.duration)
+  // The render job only knows the requested length; the reel itself can be shorter.
+  const [duration, setDuration] = useState<number>()
   const media = useMediaSource(resultMediaId)
   // Until the reel is buffered, download straight from the stream.
   const downloadHref = media?.loading && resultMediaId ? mediaUrl(resultMediaId) : media?.src
 
+  const length = resultMediaId ? duration : MOCK_DURATION_SEC
   const summary = [
-    `${formatDuration(duration ?? MOCK_DURATION_SEC)} · 9:16`,
+    length === undefined ? '9:16' : `${formatDuration(length)} · 9:16`,
     resultMediaId && !track?.mediaId
       ? 'No music'
       : [track?.title ?? 'Track', track?.bpm && `${track.bpm} BPM`].filter(Boolean).join(' · '),
@@ -55,6 +58,9 @@ export function ResultState() {
               playsInline
               preload="metadata"
               aria-label="Generated reel"
+              onLoadedMetadata={({ currentTarget }) => {
+                if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
+              }}
             />
           )}
         </PhoneFrame>

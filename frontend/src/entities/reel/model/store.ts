@@ -16,8 +16,6 @@ type ReelState = {
   progress: number
   /** Stored media of the finished reel; absent for the sample mock. */
   resultMediaId?: string
-  /** Reel length in seconds, when the renderer reported it. */
-  duration?: number
   error?: string
   /** Backend job of a real render, kept so a reload can resume polling. */
   renderId?: string
@@ -40,7 +38,6 @@ const initialState: ReelState = {
   stage: 'idle',
   progress: 0,
   resultMediaId: undefined,
-  duration: undefined,
   error: undefined,
   renderId: undefined,
   startedAt: undefined,
@@ -127,7 +124,7 @@ export const useReelStore = create<ReelState & ReelActions>()(
           if (!isCurrent()) return
 
           if (job.status === 'done' && job.resultMediaId) {
-            finish({ resultMediaId: job.resultMediaId, duration: job.duration })
+            finish({ resultMediaId: job.resultMediaId })
           } else {
             fail(jobErrorMessage(job.error) ?? 'The render failed. Try again.')
           }
@@ -181,11 +178,10 @@ export const useReelStore = create<ReelState & ReelActions>()(
     {
       name: 'raw2reel:reel',
       storage: createJSONStorage(() => sessionStorage),
-      partialize: ({ stage, progress, resultMediaId, duration, error, renderId, startedAt }) => ({
+      partialize: ({ stage, progress, resultMediaId, error, renderId, startedAt }) => ({
         stage,
         progress,
         resultMediaId,
-        duration,
         error,
         renderId,
         startedAt,

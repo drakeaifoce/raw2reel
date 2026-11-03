@@ -40,7 +40,6 @@ test('follows a render to the finished reel', async () => {
     stage: 'done',
     progress: 100,
     resultMediaId: 'reel-1',
-    duration: 15,
   })
 })
 
