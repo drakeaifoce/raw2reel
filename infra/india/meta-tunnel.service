@@ -1,0 +1,32 @@
+[Unit]
+# Обратный туннель: шведский хост получает у себя порт, ведущий в tinyproxy на
+# этой машине. Инициатива всегда отсюда, поэтому входящих портов на индийской
+# стороне не открыто вовсе.
+Description=Reverse SSH tunnel exposing the Meta proxy on the Sweden host
+After=network-online.target tinyproxy.service
+Wants=network-online.target
+Requires=tinyproxy.service
+
+[Service]
+User=metatunnel
+Type=simple
+# Привязка к 172.18.0.1 — адрес моста сети raw2reel_edge: порт должны видеть
+# контейнеры, а не только петля хоста. Требует GatewayPorts clientspecified в
+# sshd на шведской стороне. Без него sshd не ругается, а МОЛЧА вешает порт на
+# петлю — контейнеры его не увидят, поэтому настройку надо проверять глазами,
+# а не по коду возврата.
+ExecStart=/usr/bin/ssh -N \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=accept-new \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o TCPKeepAlive=yes \
+  -i /var/lib/metatunnel/.ssh/id_ed25519 \
+  -R 172.18.0.1:8888:127.0.0.1:8888 \
+  nik@20.240.128.170
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

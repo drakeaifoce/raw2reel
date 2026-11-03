@@ -143,12 +143,47 @@ check_ready() {
   fi
 }
 
+# Выход к Meta. Со шведского адреса модели не отдаются (404 model_not_found,
+# проверено 40 раз из 40), поэтому запросы AI-сервиса идут через прокси на
+# машине в Индии. Если туннель оборван, прокси недоступен — узнать об этом надо
+# на выкладке, а не из провалившегося рендера спустя полчаса.
+check_egress() {
+  local cid out
+  cid="$("${COMPOSE[@]}" ps -q ai)"
+  # -i обязателен: без него docker exec не передаёт heredoc в stdin.
+  out="$(docker exec -i "$cid" python - <<'PROBE' 2>/dev/null
+import os, urllib.request
+
+proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+if not proxy:
+    print("unset")
+else:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": proxy}))
+    try:
+        print(opener.open("https://api.ipify.org", timeout=20).read().decode().strip())
+    except Exception as error:
+        print(f"error {type(error).__name__}: {error}")
+PROBE
+)"
+  case "$out" in
+    unset)
+      echo "    ai: HTTPS_PROXY не задан — запросы к Meta пойдут напрямую" ;;
+    error*)
+      echo "    ai: выход через прокси не работает, $out" >&2
+      echo "        туннель: systemctl status meta-tunnel на индийской машине" >&2
+      return 1 ;;
+    *)
+      echo "    ai: внешний адрес через прокси $out" ;;
+  esac
+}
+
 log "проверка"
 for service in frontend backend ai; do
   wait_healthy "$service" || rollback
 done
 check_ready backend 3000 || rollback
 check_ready ai 8000 || rollback
+check_egress || rollback
 
 # ------------------------------------------------- переключение трафика
 # Только теперь: контейнеры проверены, можно уводить на них маршруты.
