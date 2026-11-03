@@ -17,8 +17,12 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 export async function analyzeFootage(mediaId: string) {
   const run = ++currentRun
   const { setAnalysis, setDetectedFaces } = useProjectStore.getState()
-  const isCurrent = () =>
-    run === currentRun && useProjectStore.getState().video?.mediaId === mediaId
+  const isCurrent = () => {
+    const state = useProjectStore.getState()
+    return (
+      run === currentRun && state.video?.mediaId === mediaId && state.analysis.status === 'running'
+    )
+  }
 
   setAnalysis({ status: 'running' })
   try {

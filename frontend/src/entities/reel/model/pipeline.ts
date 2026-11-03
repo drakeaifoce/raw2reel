@@ -12,7 +12,10 @@ export function buildPipelineSteps({ faceCount, bpm }: PipelineParams): Pipeline
     { agent: 'Muse Vision', text: 'scanning every frame for motion peaks and highlights' },
     {
       agent: 'Muse Vision',
-      text: `locking on ${pluralize(faceCount, 'selected face')}, dropping shots without them`,
+      text:
+        faceCount > 0
+          ? `locking on ${pluralize(faceCount, 'selected face')}, dropping shots without them`
+          : 'keeping the whole frame and picking the strongest shots',
     },
     { agent: 'Muse Voice', text: 'transcribing speech into word-timed captions' },
     { agent: 'Muse Spark', text: 'reading the story and choosing a hook for the first 2 seconds' },

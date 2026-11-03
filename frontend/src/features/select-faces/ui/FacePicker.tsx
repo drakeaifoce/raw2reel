@@ -12,6 +12,7 @@ export function FacePicker() {
   const analysis = useProjectStore((state) => state.analysis)
   const selectedIds = useProjectStore((state) => state.faceIds)
   const toggleFace = useProjectStore((state) => state.toggleFace)
+  const skipAnalysis = useProjectStore((state) => state.skipAnalysis)
 
   if (!video) {
     return (
@@ -21,25 +22,50 @@ export function FacePicker() {
     )
   }
 
+  const { mediaId } = video
+  const skipButton = (
+    <Button size="sm" onClick={skipAnalysis}>
+      Use the whole frame
+    </Button>
+  )
+
   if (analysis.status === 'running') {
     return (
-      <p className={clsx(styles.hint, styles.status)} role="status">
-        <PulseDot />
-        Muse Vision is finding people in your footage. This takes a few minutes.
-      </p>
+      <div className={styles.row}>
+        <p className={clsx(styles.hint, styles.status)} role="status">
+          <PulseDot />
+          Muse Vision is finding people in your footage. This takes a few minutes.
+        </p>
+        {skipButton}
+      </div>
     )
   }
 
   if (analysis.status === 'failed') {
-    const { mediaId } = video
     return (
-      <div className={styles.failed}>
+      <div className={clsx(styles.row, styles.failed)}>
         <p className={styles.hint} role="alert">
           {analysis.message}
         </p>
+        <div className={styles.actions}>
+          {mediaId && (
+            <Button size="sm" onClick={() => void analyzeFootage(mediaId)}>
+              Try again
+            </Button>
+          )}
+          {skipButton}
+        </div>
+      </div>
+    )
+  }
+
+  if (analysis.status === 'skipped') {
+    return (
+      <div className={styles.row}>
+        <p className={styles.hint}>The reel will use the whole frame, without following anyone.</p>
         {mediaId && (
           <Button size="sm" onClick={() => void analyzeFootage(mediaId)}>
-            Try again
+            Find faces
           </Button>
         )}
       </div>

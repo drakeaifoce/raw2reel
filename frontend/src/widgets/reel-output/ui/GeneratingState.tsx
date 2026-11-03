@@ -14,7 +14,8 @@ export function GeneratingState() {
 
   const percent = Math.floor(progress)
   const steps = buildPipelineSteps({ faceCount, bpm: track?.bpm })
-  const trackingLabel = faceCount === 1 ? 'Person 1' : `${faceCount} faces`
+  const trackingLabel =
+    faceCount === 0 ? 'Whole frame' : faceCount === 1 ? 'Person 1' : `${faceCount} faces`
 
   return (
     <div className={layout.layout}>

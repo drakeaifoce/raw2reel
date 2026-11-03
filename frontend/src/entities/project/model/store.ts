@@ -9,6 +9,8 @@ export type FootageAnalysis =
   | { status: 'running' }
   | { status: 'done'; id: string }
   | { status: 'failed'; message: string }
+  /** The user chose to render the whole frame without waiting for faces. */
+  | { status: 'skipped' }
 
 type ProjectState = {
   video: Video | null
@@ -26,6 +28,8 @@ type ProjectActions = {
   setAnalysis: (analysis: FootageAnalysis) => void
   /** Stores faces found by a finished analysis and pre-selects the most visible one. */
   setDetectedFaces: (analysisId: string, faces: Face[]) => void
+  /** Drops face discovery so the reel is cut from the whole frame. */
+  skipAnalysis: () => void
   toggleFace: (faceId: string) => void
   selectTrack: (trackId: string) => void
   setCustomTrack: (track: Track) => void
@@ -59,6 +63,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>()((set) => 
       faceIds: firstFaceIds(faces),
       analysis: { status: 'done', id: analysisId },
     })),
+
+  skipAnalysis: () => set({ faceIds: [], analysis: { status: 'skipped' } }),
 
   toggleFace: (faceId) =>
     set((state) => ({

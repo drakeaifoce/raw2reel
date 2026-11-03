@@ -82,3 +82,18 @@ test('reports an analysis without people as a failure', async () => {
     message: 'Muse Vision found no people in this video.',
   })
 })
+
+test('drops late results after the user skips face discovery', async () => {
+  api.createAnalysis.mockResolvedValue(analysis('queued'))
+  api.getAnalysis.mockResolvedValue(
+    analysis('done', [{ id: 'p-main', label: 'Person 1', observationCount: 40 }]),
+  )
+
+  const run = analyzeFootage('media-1')
+  useProjectStore.getState().skipAnalysis()
+  await vi.runAllTimersAsync()
+  await run
+
+  expect(useProjectStore.getState().analysis).toEqual({ status: 'skipped' })
+  expect(useProjectStore.getState().faceIds).toEqual([])
+})

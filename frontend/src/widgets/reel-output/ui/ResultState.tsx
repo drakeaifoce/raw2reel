@@ -31,7 +31,7 @@ export function ResultState() {
     resultMediaId && !track?.mediaId
       ? 'No music'
       : [track?.title ?? 'Track', track?.bpm && `${track.bpm} BPM`].filter(Boolean).join(' · '),
-    pluralize(faceCount, 'face tracked', 'faces tracked'),
+    faceCount > 0 ? pluralize(faceCount, 'face tracked', 'faces tracked') : 'Whole frame',
     'Captions on',
   ]
 
