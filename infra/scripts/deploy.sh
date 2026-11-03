@@ -157,6 +157,10 @@ import os, urllib.request
 proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
 if not proxy:
     print("unset")
+elif urllib.request.proxy_bypass("api.meta.ai"):
+    # NO_PROXY сравнивает по окончанию имени хоста, поэтому запись "ai" тихо
+    # исключает api.meta.ai, и прокси обходится ровно там, где он нужен.
+    print("error NO_PROXY исключает api.meta.ai")
 else:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": proxy}))
     try:
