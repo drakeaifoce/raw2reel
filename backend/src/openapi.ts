@@ -106,6 +106,45 @@ export function createOpenAPI() {
         },
       },
     },
+    '/samples': {
+      get: {
+        summary: 'List the bundled sample tracks and footage',
+        description:
+          'Samples are ordinary media owned by a service account, so everyone sees the same list. Take one with POST /samples/{id} before using it.',
+        security: mediaSecurity,
+        parameters: [{ name: 'limit', in: 'query', required: false, schema: { type: 'integer' } }],
+        responses: {
+          ...commonErrors,
+          '200': {
+            description: 'Available samples, newest first',
+            content: {
+              'application/json': {
+                schema: object({ items: { type: 'array', items: ref('Media') } }),
+              },
+            },
+          },
+        },
+      },
+    },
+
+    '/samples/{id}': {
+      post: {
+        summary: 'Take a sample as your own media',
+        description:
+          "Copies the sample into the caller's media and returns a record indistinguishable from an upload. A copy, not a reference: analyses and renders check ownership, and samples are no exception to that.",
+        security: mediaSecurity,
+        parameters: [parameter('id', 'path')],
+        responses: {
+          ...commonErrors,
+          '201': {
+            description: 'The copy, ready for /analyses and /renders',
+            content: { 'application/json': { schema: ref('Media') } },
+          },
+          '404': response('No such sample (a private upload is not one)', ref('Error')),
+        },
+      },
+    },
+
     '/analyses': {
       post: {
         summary: 'Queue character discovery for an owned video',

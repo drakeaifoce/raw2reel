@@ -143,6 +143,13 @@ export type AppDependencies = {
 /** Предел AI-сервиса: больше шестнадцати персонажей он не примет. */
 const MAX_PEOPLE = 16
 
+/**
+ * Владелец готовых сэмплов. Это обычные медиа, просто принадлежат не человеку,
+ * а служебному имени: так их видно всем, а правило «медиа принадлежит
+ * владельцу» остаётся в силе — пользователь берёт себе копию.
+ */
+const SAMPLES_OWNER = 'samples'
+
 const defaultRenderJobs = createRenderJobService(config)
 // Очередь подключается лениво: соединение асинхронное, а на уровне модуля
 // ждать его нельзя. Тесты подставляют свою через renderQueue.
@@ -745,7 +752,9 @@ export async function handle(
     pathname === '/renders' ||
     pathname.startsWith('/renders/') ||
     pathname === '/analyses' ||
-    pathname.startsWith('/analyses/')
+    pathname.startsWith('/analyses/') ||
+    pathname === '/samples' ||
+    pathname.startsWith('/samples/')
   ) {
     const principal = await requireMediaPrincipal(request, dependencies.auth, dependencies.identity)
     if (principal instanceof Response) return principal
@@ -815,6 +824,34 @@ export async function handle(
         'content-security-policy': "default-src 'none'; sandbox",
       },
     })
+  }
+
+  if (pathname === '/samples' && request.method === 'GET') {
+    if (!dependencies.media)
+      return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    const rawLimit = url.searchParams.get('limit') ?? '20'
+    const limit = Number(rawLimit)
+    if (!/^\d+$/.test(rawLimit) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return error('limit must be an integer from 1 to 100', 'INVALID_LIMIT', 400)
+    }
+    return json({ items: (await dependencies.media.list(limit, SAMPLES_OWNER)).map(publicMedia) })
+  }
+
+  const sampleMatch = pathname.match(/^\/samples\/([^/]+)$/)
+  if (sampleMatch && request.method === 'POST') {
+    if (!dependencies.media?.copy)
+      return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    let id: string
+    try {
+      id = decodeURIComponent(sampleMatch[1]!)
+    } catch {
+      return error('sample id has invalid URL encoding', 'INVALID_SAMPLE_ID', 400)
+    }
+    // Копия, а не ссылка: дальше по цепочке разбор и рендер проверяют
+    // владельца, и делать для сэмплов исключение из этой проверки не стоит.
+    const copied = await dependencies.media.copy(id, SAMPLES_OWNER, mediaPrincipal!.userId)
+    if (!copied) return error('sample was not found', 'SAMPLE_NOT_FOUND', 404)
+    return json(publicMedia(copied), 201)
   }
 
   if (pathname === '/analyses' && request.method === 'POST') {

@@ -21,6 +21,12 @@ export interface MediaRepository {
   create(file: File, ownerId: string): Promise<MediaMetadata>
   get(id: string, ownerId: string): Promise<StoredMedia | null>
   list(limit: number, ownerId: string): Promise<MediaMetadata[]>
+  /**
+   * Копия чужой записи себе. Нужна сэмплам: они принадлежат служебному
+   * владельцу, а разбор и рендер проверяют владельца, и делать для сэмплов
+   * исключение из этой проверки не стоит.
+   */
+  copy?(id: string, fromOwnerId: string, toOwnerId: string): Promise<MediaMetadata | null>
   transferOwner?(fromOwnerId: string, toOwnerId: string, operationId: string): Promise<number>
 }
 
@@ -73,6 +79,45 @@ export class MediaService implements MediaRepository {
       metadata,
       body: Readable.toWeb(download.readableStreamBody) as ReadableStream<Uint8Array>,
     }
+  }
+
+  async copy(id: string, fromOwnerId: string, toOwnerId: string): Promise<MediaMetadata | null> {
+    await this.indexesReady
+    const source = await this.collection.findOne(
+      { id, ownerId: fromOwnerId },
+      { projection: { _id: 0 } },
+    )
+    if (!source) return null
+
+    const copyId = crypto.randomUUID()
+    const safeName = source.name.replace(/[^\p{L}\p{N}._-]+/gu, '_') || 'media'
+    const metadata: MediaMetadata = {
+      id: copyId,
+      ownerId: toOwnerId,
+      name: source.name,
+      type: source.type,
+      size: source.size,
+      blobKey: `${encodeURIComponent(toOwnerId)}/${copyId}/${safeName}`,
+      createdAt: new Date().toISOString(),
+    }
+
+    // Потоком, а не через буфер: сэмплом может оказаться видео на сотню
+    // мегабайт, а у контейнера бэкенда памяти 384 MB.
+    const download = await this.container.getBlobClient(source.blobKey).download()
+    if (!download.readableStreamBody) throw new Error('Blob response did not include a stream')
+    const target = this.container.getBlockBlobClient(metadata.blobKey)
+    // Приведение намеренное: SDK объявляет поток как NodeJS.ReadableStream,
+    // а принимает Readable — это один и тот же объект, выше в get() он же.
+    await target.uploadStream(download.readableStreamBody as Readable, 4 * 1024 * 1024, 4, {
+      blobHTTPHeaders: { blobContentType: metadata.type },
+    })
+    try {
+      await this.collection.insertOne({ ...metadata })
+    } catch (error) {
+      await target.deleteIfExists().catch(() => undefined)
+      throw error
+    }
+    return metadata
   }
 
   async list(limit: number, ownerId: string): Promise<MediaMetadata[]> {
