@@ -134,3 +134,26 @@
   font-size: 14px;
   color: var(--color-text-muted);
 }
+
+.fullscreen {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-overlay);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fullscreen:focus-visible {
+  outline: var(--focus-ring-contrast);
+  outline-offset: 2px;
+}

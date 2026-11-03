@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useProjectStore, useSelectedTrack } from '@/entities/project'
 import { BeatGrid, MOCK_BEAT_SEGMENTS, useReelStore } from '@/entities/reel'
 import { DownloadReelButton } from '@/features/download-reel'
@@ -7,7 +7,7 @@ import { mediaUrl } from '@/shared/api'
 import { pluralize } from '@/shared/lib'
 import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
-import { CheckIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
+import { CheckIcon, ExpandIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
 import { useMediaSource } from '../model/useMediaSource'
 import { usePlaybackMock } from '../model/usePlaybackMock'
@@ -15,6 +15,17 @@ import styles from './ResultState.module.css'
 import layout from './StageLayout.module.css'
 
 const MOCK_DURATION_SEC = 27
+
+type FullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
+
+/** iOS Safari only lets the video itself go full screen, through a prefixed API. */
+function enterFullscreen(video: FullscreenVideo) {
+  if (typeof video.requestFullscreen === 'function') {
+    video.requestFullscreen().catch(() => video.webkitEnterFullscreen?.())
+  } else {
+    video.webkitEnterFullscreen?.()
+  }
+}
 
 const formatDuration = (seconds: number) => {
   const whole = Math.round(seconds)
@@ -28,6 +39,7 @@ export function ResultState() {
   const resultMediaId = useReelStore((state) => state.resultMediaId)
   // The render job only knows the requested length; the reel itself can be shorter.
   const [duration, setDuration] = useState<number>()
+  const videoRef = useRef<FullscreenVideo>(null)
   const media = useMediaSource(resultMediaId)
   // Until the reel is buffered, download straight from the stream.
   const downloadHref = media?.loading && resultMediaId ? mediaUrl(resultMediaId) : media?.src
@@ -51,17 +63,28 @@ export function ResultState() {
               Loading your reel…
             </p>
           ) : (
-            <video
-              className={styles.video}
-              src={media.src}
-              controls
-              playsInline
-              preload="metadata"
-              aria-label="Generated reel"
-              onLoadedMetadata={({ currentTarget }) => {
-                if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
-              }}
-            />
+            <>
+              <video
+                ref={videoRef}
+                className={styles.video}
+                src={media.src}
+                controls
+                playsInline
+                preload="metadata"
+                aria-label="Generated reel"
+                onLoadedMetadata={({ currentTarget }) => {
+                  if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
+                }}
+              />
+              <button
+                type="button"
+                className={styles.fullscreen}
+                onClick={() => videoRef.current && enterFullscreen(videoRef.current)}
+              >
+                <ExpandIcon size={14} />
+                Full screen
+              </button>
+            </>
           )}
         </PhoneFrame>
       ) : (
