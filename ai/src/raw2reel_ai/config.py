@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
     ai_service_token: SecretStr | None = None
     sam_model: str = "sam-3.1"
-    cloud_discovery_frames: int = Field(default=48, ge=1, le=96)
-    cloud_max_observations: int = Field(default=128, ge=1, le=256)
+    cloud_discovery_frames: int = Field(default=16, ge=1, le=96)
+    cloud_max_observations: int = Field(default=32, ge=1, le=256)
     cloud_review_seconds: float = Field(default=90, gt=0, le=180)
     cloud_track_seconds: float = Field(default=120, gt=0, le=300)
     cloud_clip_seconds: float = Field(default=8, ge=2, le=12)

@@ -36,6 +36,9 @@ services:
     env_file:
       - /opt/raw2reel/secrets/app.env
       - /opt/raw2reel/secrets/ai.env
+    environment:
+      CLOUD_DISCOVERY_FRAMES: "16"
+      CLOUD_MAX_OBSERVATIONS: "32"
     networks: [edge]
     # Рендер гоняет ffmpeg, и это самый жадный до памяти сервис
     mem_limit: 640m
