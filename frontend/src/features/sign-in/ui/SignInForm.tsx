@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { routes } from '@/shared/config'
 import { identityClient } from '@/shared/api'
 import { Button } from '@/shared/ui/button'
+import { Spinner } from '@/shared/ui/spinner'
 import { TextField } from '@/shared/ui/text-field'
 import styles from './SignInForm.module.css'
 
@@ -93,6 +94,7 @@ export function SignInForm() {
           </p>
         )}
         <Button type="submit" size="md" disabled={pending}>
+          {pending && <Spinner />}
           {pending ? 'Please wait…' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
       </form>
@@ -103,6 +105,7 @@ export function SignInForm() {
           disabled={pending || guestPending}
           onClick={() => void continueAsGuest()}
         >
+          {guestPending && <Spinner />}
           {guestPending ? 'Starting guest session…' : 'Continue as guest'}
         </Button>
         <p className={styles.guestNote}>

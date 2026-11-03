@@ -16,20 +16,37 @@ export const selectTrack = ({ trackId, customTrack, samples }: TrackState): Trac
   return upload?.status === 'ready' ? { ...preset, mediaId: upload.mediaId } : preset
 }
 
+type Requirement = {
+  message: string
+  /** The app is waiting on a service rather than on the user. */
+  waiting?: boolean
+}
+
+type ProjectState = ReturnType<typeof useProjectStore.getState>
+
+function firstRequirement(state: ProjectState): Requirement | null {
+  if (!state.video) return { message: 'Add a video or pick a sample to start.' }
+  if (state.analysis.status === 'running')
+    return { message: 'Still finding people in your footage.', waiting: true }
+  if (state.analysis.status === 'failed')
+    return { message: 'Face detection failed. Retry or replace it.' }
+  if (state.analysis.status !== 'skipped' && state.faceIds.length === 0)
+    return { message: 'Pick at least one face to keep in frame.' }
+  if (!state.trackId) return { message: 'Pick a soundtrack.' }
+  const sample = state.samples[state.trackId]
+  if (sample?.status === 'uploading') return { message: 'Preparing the soundtrack…', waiting: true }
+  if (sample?.status === 'failed') return { message: 'The soundtrack did not load. Try again.' }
+  return null
+}
+
 /** First thing the user still has to do before generating, or `null` when ready. */
 export function useMissingRequirement(): string | null {
-  return useProjectStore((state) => {
-    if (!state.video) return 'Add a video or pick a sample to start.'
-    if (state.analysis.status === 'running') return 'Still finding people in your footage.'
-    if (state.analysis.status === 'failed') return 'Face detection failed. Retry or replace it.'
-    if (state.analysis.status !== 'skipped' && state.faceIds.length === 0)
-      return 'Pick at least one face to keep in frame.'
-    if (!state.trackId) return 'Pick a soundtrack.'
-    const sample = state.samples[state.trackId]
-    if (sample?.status === 'uploading') return 'Preparing the soundtrack…'
-    if (sample?.status === 'failed') return 'The soundtrack did not load. Try again.'
-    return null
-  })
+  return useProjectStore((state) => firstRequirement(state)?.message ?? null)
+}
+
+/** Whether generating is blocked only until a service answers. */
+export function useWaitingOnService(): boolean {
+  return useProjectStore((state) => firstRequirement(state)?.waiting === true)
 }
 
 /** The chosen preset or uploaded soundtrack. */

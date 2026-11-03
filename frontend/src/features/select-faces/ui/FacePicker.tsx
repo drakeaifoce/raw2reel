@@ -1,9 +1,9 @@
 import clsx from 'clsx'
 import { FaceTile } from '@/entities/face'
 import { analyzeFootage, useProjectStore } from '@/entities/project'
-import { pluralize } from '@/shared/lib'
+import { formatElapsed, pluralize, useElapsedSeconds } from '@/shared/lib'
 import { Button } from '@/shared/ui/button'
-import { PulseDot } from '@/shared/ui/pulse-dot'
+import { Spinner } from '@/shared/ui/spinner'
 import styles from './FacePicker.module.css'
 
 /** Step 2: choose which detected people the edit should follow. */
@@ -32,11 +32,7 @@ export function FacePicker() {
   if (analysis.status === 'running') {
     return (
       <div className={styles.row}>
-        <p className={clsx(styles.hint, styles.status)} role="status">
-          <PulseDot />
-          SAM 3.1 is finding people scene by scene and Muse Spark is grouping them. This takes a few
-          minutes.
-        </p>
+        <FindingPeople />
         {skipButton}
       </div>
     )
@@ -91,5 +87,23 @@ export function FacePicker() {
         ))}
       </ul>
     </>
+  )
+}
+
+/** Face discovery takes minutes, so show it is alive and how long it has been going. */
+function FindingPeople() {
+  const elapsed = useElapsedSeconds()
+
+  return (
+    <p className={clsx(styles.hint, styles.status)} role="status">
+      <Spinner />
+      <span>
+        SAM 3.1 is finding people scene by scene and Muse Spark is grouping them. This takes a few
+        minutes.{' '}
+        <span className={styles.elapsed} aria-hidden="true">
+          {formatElapsed(elapsed)}
+        </span>
+      </span>
+    </p>
   )
 }

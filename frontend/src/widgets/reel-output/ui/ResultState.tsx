@@ -9,6 +9,7 @@ import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
 import { CheckIcon, ExpandIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
+import { Spinner } from '@/shared/ui/spinner'
 import { useMediaSource } from '../model/useMediaSource'
 import { usePlaybackMock } from '../model/usePlaybackMock'
 import styles from './ResultState.module.css'
@@ -60,6 +61,7 @@ export function ResultState() {
         <PhoneFrame width={280} tone={video?.tone}>
           {media.loading ? (
             <p className={styles.loading} role="status">
+              <Spinner size={24} />
               Loading your reel…
             </p>
           ) : (

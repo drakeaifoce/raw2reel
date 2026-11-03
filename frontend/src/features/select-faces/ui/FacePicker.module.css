@@ -40,3 +40,12 @@
 .failed .hint {
   color: var(--color-danger);
 }
+
+.status > :first-child {
+  color: var(--color-accent-soft);
+}
+
+.elapsed {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}

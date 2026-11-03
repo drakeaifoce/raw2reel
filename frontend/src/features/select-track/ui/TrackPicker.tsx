@@ -4,6 +4,7 @@ import { prepareSampleTrack, useProjectStore } from '@/entities/project'
 import { TRACKS, TrackInfo, type Track } from '@/entities/track'
 import { Equalizer } from '@/shared/ui/equalizer'
 import { PlayIcon, UploadIcon } from '@/shared/ui/icon'
+import { Spinner } from '@/shared/ui/spinner'
 import { visuallyHiddenClassName } from '@/shared/ui/visually-hidden'
 import { useTrackPreview } from '../model/useTrackPreview'
 import { useTrackUpload } from '../model/useTrackUpload'
@@ -43,6 +44,7 @@ export function TrackPicker() {
       {tracks.map((track) => {
         const selected = track.id === selectedId
         const previewing = track.id === previewingId
+        const preparing = samples[track.id]?.status === 'uploading'
 
         return (
           <div key={track.id} className={clsx(styles.row, selected && styles.selected)}>
@@ -58,6 +60,12 @@ export function TrackPicker() {
               <span className={styles.radio} aria-hidden="true" />
               <TrackInfo track={track} />
             </label>
+            {preparing && (
+              <span className={styles.preparing} role="status">
+                <Spinner size={14} />
+                Preparing
+              </span>
+            )}
             {!track.mediaId && (
               <button
                 type="button"
@@ -74,7 +82,7 @@ export function TrackPicker() {
       })}
 
       <label className={styles.upload}>
-        <UploadIcon size={16} />
+        {upload.status === 'uploading' ? <Spinner size={16} /> : <UploadIcon size={16} />}
         {upload.status === 'uploading'
           ? `Uploading track · ${Math.round(upload.progress * 100)}%`
           : 'Upload your own track'}
