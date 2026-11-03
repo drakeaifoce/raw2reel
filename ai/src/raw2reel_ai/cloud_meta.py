@@ -2,13 +2,16 @@
 
 import base64
 import re
+import time
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
+import structlog
 from pydantic import ValidationError
 
 from .cloud_models import SamBox
 from .meta import MetaClient, MetaError
+from .observability import exception_fields
 
 BOX = re.compile(r"(\d+)<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);w=(\d+);h=(\d+)\|>")
 
@@ -114,18 +117,56 @@ class CloudModels:
                 self.client._request("DELETE", f"files/{identity}")
 
     def _response(self, model, stage, content, **extra):
-        response = self.client._request(
-            "POST",
-            "responses",
-            json={
-                "model": model,
-                "input": [{"role": "user", "content": content}],
-                "stream": False,
-                **extra,
-            },
-        )
-        self.calls.append({"stage": stage, "model": model, "usage": response.get("usage", {})})
-        return output_text(response)
+        log = structlog.get_logger(__name__)
+        started = time.monotonic()
+        with structlog.contextvars.bound_contextvars(model=model, model_stage=stage):
+            log.info("model_call_started")
+            try:
+                response = self.client._request(
+                    "POST",
+                    "responses",
+                    json={
+                        "model": model,
+                        "input": [{"role": "user", "content": content}],
+                        "stream": False,
+                        **extra,
+                    },
+                )
+                self.calls.append(
+                    {"stage": stage, "model": model, "usage": response.get("usage", {})}
+                )
+                result = output_text(response)
+            except Exception as error:
+                log.error(
+                    "model_call_failed",
+                    duration_ms=round((time.monotonic() - started) * 1000, 2),
+                    **exception_fields(error),
+                )
+                raise
+            usage = response.get("usage")
+            counters = (
+                {
+                    key: value
+                    for key, value in usage.items()
+                    if key
+                    in {
+                        "input_tokens",
+                        "output_tokens",
+                        "total_tokens",
+                        "images_processed",
+                        "frames_processed",
+                    }
+                    and isinstance(value, (int, float))
+                }
+                if isinstance(usage, dict)
+                else {}
+            )
+            log.info(
+                "model_call_completed",
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+                **counters,
+            )
+            return result
 
     def sam(self, media: bytes | Path, prompt: str) -> list[SamBox]:
         def invoke(part):

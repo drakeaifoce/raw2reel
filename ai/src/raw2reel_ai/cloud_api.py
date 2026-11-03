@@ -4,6 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import structlog
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
@@ -13,6 +14,8 @@ from starlette.datastructures import UploadFile
 from .analysis import MAX_ANALYSIS_BYTES, PreparedAnalysis
 from .media import MediaError
 from .meta import MetaError
+
+log = structlog.get_logger(__name__)
 
 
 def _schema(render):
@@ -104,6 +107,7 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
                             stream.write(data)
                     if not size:
                         raise HTTPException(422, f"{name} is empty.")
+                    log.info("upload_saved", field=name, bytes_count=size)
                     return path
 
                 source = await save("video", settings.max_upload_bytes)
@@ -163,10 +167,16 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
             work = None
             return response
         except MediaError as error:
+            log.warning(
+                "request_rejected", error_code="media_error", error_type=type(error).__name__
+            )
             return JSONResponse(
                 {"error": {"code": "media_error", "message": str(error)}}, status_code=422
             )
         except MetaError as error:
+            log.error(
+                "request_model_failed", error_code=error.code, error_type=type(error).__name__
+            )
             return JSONResponse(
                 {"error": {"code": error.code, "message": str(error)}},
                 status_code=(
@@ -177,7 +187,10 @@ def install_cloud_routes(app, settings, authenticate, lock, pipeline_factory):
                     else 502
                 ),
             )
-        except (ValueError, OSError, KeyError):
+        except (ValueError, OSError, KeyError) as error:
+            log.warning(
+                "request_rejected", error_code="invalid_input", error_type=type(error).__name__
+            )
             raise HTTPException(422, "Invalid source, analysis JSON or render options.") from None
         finally:
             if work is not None:

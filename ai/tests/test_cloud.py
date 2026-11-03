@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from raw2reel_ai.analysis import read_analysis
@@ -83,7 +85,7 @@ def test_square_source_keeps_group_that_fits_portrait():
     assert centers[0][1] == pytest.approx(0.5)
 
 
-def test_cli_debug_preserves_original_exception(monkeypatch, capsys, tmp_path):
+def test_cli_debug_preserves_safe_stack(monkeypatch, capsys, tmp_path):
     import raw2reel_ai.cli as cli
 
     class BrokenPipeline:
@@ -110,7 +112,11 @@ def test_cli_debug_preserves_original_exception(monkeypatch, capsys, tmp_path):
         str(tmp_path / "result.json"),
     ]
     assert cli.main(args) == 1
-    assert "ValueError: grouping diagnostic marker" in capsys.readouterr().err
+    output = capsys.readouterr().err
+    event = json.loads(output.splitlines()[-1])
+    assert event["error_type"] == "ValueError"
+    assert event["traceback"][-1]["function"] == "prepare"
+    assert "grouping diagnostic marker" not in output
 
 
 def test_cloud_incomplete_and_missing_output_are_model_errors():

@@ -4,6 +4,7 @@ import hmac
 import threading
 from typing import Annotated
 
+import structlog
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,6 +13,8 @@ from .cloud_api import install_cloud_routes
 from .cloud_pipeline import CloudPipeline
 from .config import Settings, get_settings
 from .health import readiness
+from .observability import configure_logging
+from .request_logging import RequestLoggingMiddleware
 
 
 def create_app(
@@ -20,7 +23,15 @@ def create_app(
     cloud_pipeline_factory=CloudPipeline,
 ):
     settings = service_settings or get_settings()
+    configure_logging(settings.log_level, settings.log_format)
     app = FastAPI(title="raw2reel-ai", version="0.0.0")
+    app.add_middleware(RequestLoggingMiddleware, settings=settings)
+    structlog.get_logger(__name__).info(
+        "service_configured",
+        version=settings.git_sha,
+        log_level=settings.log_level,
+        log_format=settings.log_format,
+    )
     render_lock = threading.Lock()
     bearer = HTTPBearer(
         scheme_name="AIServiceToken",
