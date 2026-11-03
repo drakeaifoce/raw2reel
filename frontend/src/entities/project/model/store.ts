@@ -14,6 +14,12 @@ export type FootageAnalysis =
   /** The user chose to render the whole frame without waiting for faces. */
   | { status: 'skipped' }
 
+/** Upload of a bundled sample to the user's media, so the renderer can mix it in. */
+export type SampleUpload =
+  | { status: 'uploading' }
+  | { status: 'ready'; mediaId: string }
+  | { status: 'failed'; message: string }
+
 type ProjectState = {
   video: Video | null
   faceIds: string[]
@@ -21,6 +27,8 @@ type ProjectState = {
   analysis: FootageAnalysis
   /** Soundtrack the user uploaded, listed next to the presets. */
   customTrack: Track | null
+  /** Sample uploads by track id. */
+  samples: Record<string, SampleUpload>
 }
 
 type ProjectActions = {
@@ -35,6 +43,7 @@ type ProjectActions = {
   toggleFace: (faceId: string) => void
   selectTrack: (trackId: string) => void
   setCustomTrack: (track: Track) => void
+  setSampleUpload: (trackId: string, upload: SampleUpload) => void
   reset: () => void
 }
 
@@ -44,6 +53,7 @@ const initialState: ProjectState = {
   trackId: null,
   analysis: { status: 'idle' },
   customTrack: null,
+  samples: {},
 }
 
 const firstFaceIds = (faces: Face[]) => (faces[0] ? [faces[0].id] : [])
@@ -84,17 +94,24 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
 
       setCustomTrack: (track) => set({ customTrack: track, trackId: track.id }),
 
+      setSampleUpload: (trackId, upload) =>
+        set((state) => ({ samples: { ...state.samples, [trackId]: upload } })),
+
       reset: () => set(initialState),
     }),
     {
       name: 'raw2reel:project',
       storage: createJSONStorage(() => sessionStorage),
-      partialize: ({ video, faceIds, trackId, analysis, customTrack }) => ({
+      partialize: ({ video, faceIds, trackId, analysis, customTrack, samples }) => ({
         video,
         faceIds,
         trackId,
         analysis,
         customTrack,
+        // An upload cut short by a reload is restarted on the next pick.
+        samples: Object.fromEntries(
+          Object.entries(samples).filter(([, upload]) => upload.status === 'ready'),
+        ),
       }),
     },
   ),

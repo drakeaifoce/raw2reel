@@ -116,3 +116,13 @@
 .note {
   color: var(--color-text-muted);
 }
+
+.retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

@@ -1,25 +1,34 @@
 import clsx from 'clsx'
-import { useId, useState, type ChangeEvent } from 'react'
-import { useProjectStore } from '@/entities/project'
-import { TRACKS, TrackInfo } from '@/entities/track'
+import { useId, type ChangeEvent } from 'react'
+import { prepareSampleTrack, useProjectStore } from '@/entities/project'
+import { TRACKS, TrackInfo, type Track } from '@/entities/track'
 import { Equalizer } from '@/shared/ui/equalizer'
 import { PlayIcon, UploadIcon } from '@/shared/ui/icon'
 import { visuallyHiddenClassName } from '@/shared/ui/visually-hidden'
+import { useTrackPreview } from '../model/useTrackPreview'
 import { useTrackUpload } from '../model/useTrackUpload'
 import styles from './TrackPicker.module.css'
 
 /**
- * Step 3: pick the soundtrack. Presets are not stored media yet, so only an uploaded track
- * reaches the renderer; preset previews are a visual mock without audio.
+ * Step 3: pick the soundtrack. Picking a sample uploads its bundled audio so the renderer
+ * can mix it in; placeholder presets have no audio, so only an upload reaches the render.
  */
 export function TrackPicker() {
   const selectedId = useProjectStore((state) => state.trackId)
   const selectTrack = useProjectStore((state) => state.selectTrack)
   const customTrack = useProjectStore((state) => state.customTrack)
+  const samples = useProjectStore((state) => state.samples)
   const { upload, start } = useTrackUpload()
-  const [previewingId, setPreviewingId] = useState<string | null>(null)
+  const { previewingId, toggle } = useTrackPreview()
   const groupName = useId()
   const tracks = customTrack ? [customTrack, ...TRACKS] : TRACKS
+  const hasSamples = TRACKS.some((track) => track.src)
+  const selectedSample = selectedId ? samples[selectedId] : undefined
+
+  const pick = (track: Track) => {
+    selectTrack(track.id)
+    void prepareSampleTrack(track)
+  }
 
   const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -43,7 +52,7 @@ export function TrackPicker() {
                 name={groupName}
                 value={track.id}
                 checked={selected}
-                onChange={() => selectTrack(track.id)}
+                onChange={() => pick(track)}
                 className={visuallyHiddenClassName}
               />
               <span className={styles.radio} aria-hidden="true" />
@@ -55,7 +64,7 @@ export function TrackPicker() {
                 className={styles.preview}
                 aria-label={`${previewing ? 'Stop preview of' : 'Preview'} ${track.title}`}
                 aria-pressed={previewing}
-                onClick={() => setPreviewingId(previewing ? null : track.id)}
+                onClick={() => toggle(track)}
               >
                 {previewing ? <Equalizer /> : <PlayIcon size={14} />}
               </button>
@@ -82,7 +91,22 @@ export function TrackPicker() {
           {upload.message}
         </p>
       )}
-      {!customTrack && (
+      {selectedSample?.status === 'failed' && (
+        <p role="alert" className={styles.error}>
+          {selectedSample.message}{' '}
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => {
+              const track = TRACKS.find((item) => item.id === selectedId)
+              if (track) void prepareSampleTrack(track)
+            }}
+          >
+            Try again
+          </button>
+        </p>
+      )}
+      {!customTrack && !hasSamples && (
         <p className={styles.note}>Presets don’t add music to the render yet. Upload a track.</p>
       )}
     </fieldset>
