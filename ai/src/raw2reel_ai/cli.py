@@ -2,16 +2,15 @@
 
 import argparse
 import json
-import sys
-import traceback
+import uuid
 from pathlib import Path
 
-from pydantic import ValidationError
+import structlog
 
 from .cloud_pipeline import CloudPipeline
 from .config import Settings
 from .media import MediaError
-from .meta import MetaError
+from .observability import configure_logging, exception_fields
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,7 +24,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Server-side environment file",
     )
     parser.add_argument(
-        "--debug", action="store_true", help="Print the original exception traceback"
+        "--debug",
+        action="store_true",
+        help="Include stack frame locations without exception values",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser(
@@ -44,17 +45,20 @@ def main(argv: list[str] | None = None) -> int:
     cloud_render.add_argument("--no-captions", action="store_true")
     cloud_render.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
+    configure_logging()
+    with structlog.contextvars.bound_contextvars(
+        request_id=uuid.uuid4().hex, entrypoint="cli", operation=args.command
+    ):
+        return _execute(args)
+
+
+def _execute(args):
     try:
         settings = Settings(_env_file=args.env_file)
+        configure_logging(settings.log_level, settings.log_format)
         with CloudPipeline(settings) as pipeline:
-
-            def progress(stage: str):
-                print(stage, file=sys.stderr, flush=True)
-
             if args.command == "prepare":
-                result = pipeline.prepare(
-                    args.video, args.output, overwrite=args.overwrite, on_progress=progress
-                )
+                result = pipeline.prepare(args.video, args.output, overwrite=args.overwrite)
             elif args.command == "render-v2":
                 result = pipeline.render(
                     args.video,
@@ -65,7 +69,6 @@ def main(argv: list[str] | None = None) -> int:
                     duration=args.duration,
                     captions=not args.no_captions,
                     overwrite=args.overwrite,
-                    on_progress=progress,
                 )
         if args.command == "prepare":
             result = {
@@ -76,26 +79,11 @@ def main(argv: list[str] | None = None) -> int:
             }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
-    except MetaError as error:
-        if args.debug:
-            traceback.print_exc()
-        print(f"{error.code}: {error}", file=sys.stderr)
-    except MediaError as error:
-        if args.debug:
-            traceback.print_exc()
-        print(f"media_error: {error}", file=sys.stderr)
-    except ValidationError:
-        if args.debug:
-            traceback.print_exc()
-        print(
-            "invalid_input: invalid settings, analysis or render options.",
-            file=sys.stderr,
-        )
-    except (OSError, ValueError, KeyError, TypeError):
-        if args.debug:
-            traceback.print_exc()
-        print(
-            "invalid_input: check input files, saved analysis and output paths.",
-            file=sys.stderr,
-        )
+    except Exception as error:
+        fields = exception_fields(error)
+        if isinstance(error, MediaError):
+            fields["error_code"] = "media_error"
+        if not args.debug and fields["error_code"] != "internal_error":
+            fields.pop("traceback", None)
+        structlog.get_logger(__name__).error("command_failed", **fields)
     return 1

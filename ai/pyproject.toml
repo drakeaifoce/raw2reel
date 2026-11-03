@@ -10,6 +10,7 @@ dependencies = [
     "pillow>=11.0",
     "pydantic-settings>=2.7",
     "python-multipart>=0.0.20,<0.1",
+    "structlog>=25.4",
 ]
 
 [dependency-groups]

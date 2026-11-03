@@ -4,11 +4,15 @@ import array
 import json
 import math
 import subprocess
+import time
 import wave
 from pathlib import Path
 
+import structlog
+
 from .config import Settings
 from .models import Segment
+from .observability import configure_logging
 from .reframing import portrait_filter
 
 
@@ -18,6 +22,7 @@ class MediaError(Exception):
 
 class MediaTools:
     def __init__(self, settings: Settings):
+        configure_logging(settings.log_level, settings.log_format)
         self.settings = settings
 
     def run(
@@ -27,6 +32,20 @@ class MediaTools:
         timeout: float | None = None,
         cwd: Path | None = None,
     ):
+        log = structlog.get_logger(__name__)
+        tool = "ffprobe" if arguments[0] == self.settings.ffprobe_path else "ffmpeg"
+        started = time.monotonic()
+        log.debug("media_command_started", tool=tool)
+
+        def failed(reason, **fields):
+            log.error(
+                "media_command_failed",
+                tool=tool,
+                reason=reason,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+                **fields,
+            )
+
         try:
             result = subprocess.run(
                 arguments,
@@ -37,6 +56,7 @@ class MediaTools:
                 check=False,
             )
         except FileNotFoundError:
+            failed("executable_missing")
             variable = (
                 "FFPROBE_PATH" if arguments[0] == self.settings.ffprobe_path else "FFMPEG_PATH"
             )
@@ -45,10 +65,18 @@ class MediaTools:
                 "to its full path, install it on PATH, or put it in ai/.tools/."
             ) from None
         except subprocess.TimeoutExpired:
+            failed("timeout")
             raise MediaError("Media processing exceeded its time limit.") from None
         if result.returncode:
+            failed("nonzero_exit", exit_code=result.returncode)
             # Stderr can contain private paths and input metadata; never pass it to clients.
             raise MediaError("Could not decode or render this media file.")
+        log.debug(
+            "media_command_completed",
+            tool=tool,
+            exit_code=0,
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+        )
         return result.stdout
 
     def ffmpeg(self, *args: str, cwd: Path | None = None):

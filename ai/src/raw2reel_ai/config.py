@@ -3,6 +3,7 @@
 from functools import cache
 from pathlib import Path
 from shutil import which
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,8 @@ def tool_path(name: str) -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore", env_file=".env")
 
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_format: Literal["json", "console"] = "json"
     ai_service_token: SecretStr | None = None
     sam_model: str = "sam-3.1"
     cloud_discovery_frames: int = Field(default=48, ge=1, le=96)

@@ -5,6 +5,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import structlog
 from PIL import Image
 
 from .analysis import PreparedAnalysis, read_analysis, write_analysis
@@ -28,9 +29,12 @@ from .face_filters import FaceFilters
 from .media import MediaTools
 from .meta import MetaClient, MetaError
 from .models import Segment
+from .observability import logged_operation
 from .pipeline_io import fingerprint, has_signal, write_json
 from .planning import make_srt, quantize_segments
 from .reframing import portrait_filter, remap_impact
+
+log = structlog.get_logger(__name__)
 
 
 class CloudPipeline:
@@ -53,6 +57,7 @@ class CloudPipeline:
             raise ValueError("Source exceeds size limit")
         return source, self.tools.probe(source)
 
+    @logged_operation("prepare")
     def prepare(self, source: Path, output: Path, *, overwrite=False, on_progress=None):
         progress = on_progress or (lambda _: None)
         source, info = self.source(source)
@@ -110,6 +115,14 @@ class CloudPipeline:
                 filtering.candidates_after += len(result.boxes)
                 filtering.removed_small += result.removed_small
                 filtering.removed_duplicates += result.removed_duplicates
+                log.info(
+                    "faces_filtered",
+                    scene_index=index,
+                    detected=len(normalized),
+                    retained=len(result.boxes),
+                    removed_small=result.removed_small,
+                    removed_duplicates=result.removed_duplicates,
+                )
                 progress(f"filtering_faces {len(normalized)} -> {len(result.boxes)}")
                 for bbox in result.boxes[:16]:
                     if len(observations) >= self.settings.cloud_max_observations:
@@ -207,6 +220,7 @@ class CloudPipeline:
         progress("done")
         return payload.model_dump(mode="json")
 
+    @logged_operation("render")
     def render(
         self,
         source: Path,
