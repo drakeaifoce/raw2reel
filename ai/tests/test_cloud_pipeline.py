@@ -1,7 +1,7 @@
 import pytest
 
 from raw2reel_ai.analysis import read_analysis
-from raw2reel_ai.cloud_models import EditPlan, Grouping, SamBox, Selection
+from raw2reel_ai.cloud_models import EditPlan, FaceBoxes, Grouping, SamBox, Selection
 from raw2reel_ai.cloud_pipeline import CloudPipeline
 from raw2reel_ai.config import Settings
 from raw2reel_ai.media import MediaTools
@@ -104,6 +104,56 @@ def test_prepare_render_reuses_transcript_and_remaps_reordered_clips(tmp_path):
         pipeline.render(
             changed, tmp_path / "invalid.mp4", analysis=artifact, person_ids=["p1"], duration=2
         )
+
+
+def test_prepare_falls_back_to_grounding_when_sam_finds_no_faces(tmp_path):
+    """SAM находит лица не в каждой сцене, и тогда работает резервная ветка.
+
+    Она не была покрыта тестом и падала с TypeError: вызов structured()
+    передавал лишнюю схему. На проде это дало 68 ответов 500 за три часа —
+    разбор обрывался на первой же сцене без лиц.
+    """
+    settings = Settings(_env_file=None, cloud_clip_seconds=2, cloud_discovery_frames=2)
+    tools = MediaTools(settings)
+    source = tmp_path / "source.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=size=320x240:rate=30",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:duration=4",
+        "-t",
+        "4",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        str(source),
+    )
+
+    class BlindSam(FakeCloud):
+        def sam(self, media, prompt):
+            if isinstance(media, bytes):
+                return []
+            return super().sam(media, prompt)
+
+        def structured(self, schema, prompt, **kwargs):
+            if schema is FaceBoxes:
+                self.calls.append({"stage": kwargs.get("stage")})
+                return FaceBoxes(faces=[{"bbox": [0.2, 0.2, 0.4, 0.5]}])
+            return super().structured(schema, prompt, **kwargs)
+
+    cloud = BlindSam()
+    pipeline = CloudPipeline(settings, meta=FakeMeta(), cloud=cloud)
+    artifact = tmp_path / "prepared.json"
+    pipeline.prepare(source, artifact)
+
+    catalog, _ = read_analysis(artifact)
+    assert [call["stage"] for call in cloud.calls].count("face_grounding") == 2
+    assert catalog.observations
 
 
 def test_hard_cut_boundaries_reset_tracking(tmp_path):

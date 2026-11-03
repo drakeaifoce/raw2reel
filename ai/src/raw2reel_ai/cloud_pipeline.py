@@ -96,7 +96,6 @@ class CloudPipeline:
                 if not boxes:
                     fallback = self.cloud.structured(
                         FaceBoxes,
-                        FaceFilteringReport,
                         "Locate visible faces in this image. Return normalized xyxy boxes; "
                         "return [] if none are visible.",
                         images=[frame],
