@@ -6,7 +6,7 @@ import styles from './LoginPage.module.css'
 export function LoginPage() {
   return (
     <div className={styles.page}>
-      <AppHeader variant="landing" aside="Hackathon demo build" />
+      <AppHeader variant="landing" />
       <main className={styles.main}>
         <Hero />
         <SignInForm />

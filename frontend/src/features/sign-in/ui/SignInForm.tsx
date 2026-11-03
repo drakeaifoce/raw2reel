@@ -99,7 +99,7 @@ export function SignInForm() {
       <div className={styles.guestSection}>
         <Button
           type="button"
-          variant="secondary"
+          variant="primary"
           disabled={pending || guestPending}
           onClick={() => void continueAsGuest()}
         >
