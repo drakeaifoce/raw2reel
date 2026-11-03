@@ -61,3 +61,24 @@ test('stops following a render after reset', async () => {
   expect(api.getRender).not.toHaveBeenCalled()
   expect(useReelStore.getState().stage).toBe('idle')
 })
+
+test('resumes polling a render that was in flight before a reload', async () => {
+  useReelStore.setState({ stage: 'generating', progress: 40, renderId: 'job-1' })
+  api.getRender
+    .mockResolvedValueOnce(job('rendering'))
+    .mockResolvedValueOnce(job('done', { resultMediaId: 'reel-1', duration: 15 }))
+
+  const run = useReelStore.getState().resume()
+  await vi.advanceTimersByTimeAsync(5000)
+  await run
+  await vi.advanceTimersByTimeAsync(1000)
+
+  expect(api.createRender).not.toHaveBeenCalled()
+  expect(useReelStore.getState()).toMatchObject({ stage: 'done', resultMediaId: 'reel-1' })
+})
+
+test('drops a sample mock that cannot be resumed', async () => {
+  useReelStore.setState({ stage: 'generating', progress: 40 })
+  await useReelStore.getState().resume()
+  expect(useReelStore.getState().stage).toBe('idle')
+})

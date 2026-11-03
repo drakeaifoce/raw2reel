@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { analyzeFootage } from './analysis'
+import { analyzeFootage, resumeAnalysis } from './analysis'
 import { useProjectStore } from './store'
 
 const api = vi.hoisted(() => ({ createAnalysis: vi.fn(), getAnalysis: vi.fn() }))
@@ -96,4 +96,16 @@ test('drops late results after the user skips face discovery', async () => {
 
   expect(useProjectStore.getState().analysis).toEqual({ status: 'skipped' })
   expect(useProjectStore.getState().faceIds).toEqual([])
+})
+
+test('resumes an analysis that was running before a reload', async () => {
+  useProjectStore.getState().setAnalysis({ status: 'running', id: 'an-1' })
+  api.getAnalysis.mockResolvedValue(
+    analysis('done', [{ id: 'p-main', label: 'Person 1', observationCount: 40 }]),
+  )
+
+  await resumeAnalysis()
+
+  expect(api.createAnalysis).not.toHaveBeenCalled()
+  expect(useProjectStore.getState().analysis).toEqual({ status: 'done', id: 'an-1' })
 })

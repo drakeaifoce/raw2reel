@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { Face } from '@/entities/face/@x/project'
 import type { Track } from '@/entities/track/@x/project'
 import type { Video } from '@/entities/video/@x/project'
@@ -6,7 +7,8 @@ import type { Video } from '@/entities/video/@x/project'
 /** Muse Vision face discovery for uploaded footage; samples skip it. */
 export type FootageAnalysis =
   | { status: 'idle' }
-  | { status: 'running' }
+  /** `id` is known once the backend accepted the job. */
+  | { status: 'running'; id?: string }
   | { status: 'done'; id: string }
   | { status: 'failed'; message: string }
   /** The user chose to render the whole frame without waiting for faces. */
@@ -46,36 +48,54 @@ const initialState: ProjectState = {
 
 const firstFaceIds = (faces: Face[]) => (faces[0] ? [faces[0].id] : [])
 
-/** Client-side edit setup: footage, faces to keep in frame and soundtrack. */
-export const useProjectStore = create<ProjectState & ProjectActions>()((set) => ({
-  ...initialState,
+/**
+ * Client-side edit setup: footage, faces to keep in frame and soundtrack.
+ * Kept in session storage so a reload mid-analysis can pick the job back up.
+ */
+export const useProjectStore = create<ProjectState & ProjectActions>()(
+  persist(
+    (set) => ({
+      ...initialState,
 
-  setVideo: (video) =>
-    set({ video, faceIds: firstFaceIds(video.faces), analysis: { status: 'idle' } }),
+      setVideo: (video) =>
+        set({ video, faceIds: firstFaceIds(video.faces), analysis: { status: 'idle' } }),
 
-  clearVideo: () => set({ video: null, faceIds: [], analysis: { status: 'idle' } }),
+      clearVideo: () => set({ video: null, faceIds: [], analysis: { status: 'idle' } }),
 
-  setAnalysis: (analysis) => set({ analysis }),
+      setAnalysis: (analysis) => set({ analysis }),
 
-  setDetectedFaces: (analysisId, faces) =>
-    set((state) => ({
-      video: state.video && { ...state.video, faces },
-      faceIds: firstFaceIds(faces),
-      analysis: { status: 'done', id: analysisId },
-    })),
+      setDetectedFaces: (analysisId, faces) =>
+        set((state) => ({
+          video: state.video && { ...state.video, faces },
+          faceIds: firstFaceIds(faces),
+          analysis: { status: 'done', id: analysisId },
+        })),
 
-  skipAnalysis: () => set({ faceIds: [], analysis: { status: 'skipped' } }),
+      skipAnalysis: () => set({ faceIds: [], analysis: { status: 'skipped' } }),
 
-  toggleFace: (faceId) =>
-    set((state) => ({
-      faceIds: state.faceIds.includes(faceId)
-        ? state.faceIds.filter((id) => id !== faceId)
-        : [...state.faceIds, faceId],
-    })),
+      toggleFace: (faceId) =>
+        set((state) => ({
+          faceIds: state.faceIds.includes(faceId)
+            ? state.faceIds.filter((id) => id !== faceId)
+            : [...state.faceIds, faceId],
+        })),
 
-  selectTrack: (trackId) => set({ trackId }),
+      selectTrack: (trackId) => set({ trackId }),
 
-  setCustomTrack: (track) => set({ customTrack: track, trackId: track.id }),
+      setCustomTrack: (track) => set({ customTrack: track, trackId: track.id }),
 
-  reset: () => set(initialState),
-}))
+      reset: () => set(initialState),
+    }),
+    {
+      name: 'raw2reel:project',
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: ({ video, faceIds, trackId, analysis, customTrack }) => ({
+        video,
+        faceIds,
+        trackId,
+        analysis,
+        customTrack,
+      }),
+    },
+  ),
+)

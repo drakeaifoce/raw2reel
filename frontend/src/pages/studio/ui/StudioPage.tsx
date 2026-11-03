@@ -1,3 +1,6 @@
+import { useEffect } from 'react'
+import { resumeAnalysis } from '@/entities/project'
+import { useReelStore } from '@/entities/reel'
 import { SignOutLink } from '@/features/sign-out'
 import { Chip } from '@/shared/ui/chip'
 import { UserIcon } from '@/shared/ui/icon'
@@ -10,6 +13,13 @@ import { MediaList } from './MediaList'
 
 export function StudioPage() {
   const { data: session } = authClient.useSession()
+
+  // Jobs take minutes; after a reload, keep following the ones still in flight.
+  useEffect(() => {
+    void resumeAnalysis()
+    void useReelStore.getState().resume()
+  }, [])
+
   return (
     <div className={styles.page}>
       <AppHeader

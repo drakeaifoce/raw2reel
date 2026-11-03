@@ -14,7 +14,22 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * Starts Muse Vision face discovery for uploaded footage and polls until it settles.
  * Results are dropped if the footage changed or a newer run started meanwhile.
  */
-export async function analyzeFootage(mediaId: string) {
+export function analyzeFootage(mediaId: string) {
+  useProjectStore.getState().setAnalysis({ status: 'running' })
+  return follow(mediaId, () => createAnalysis(mediaId))
+}
+
+/** Picks up an analysis that was still running when the page was reloaded. */
+export function resumeAnalysis() {
+  const { video, analysis } = useProjectStore.getState()
+  if (!video?.mediaId || analysis.status !== 'running') return
+  if (!analysis.id) return analyzeFootage(video.mediaId)
+  const { id } = analysis
+  return follow(video.mediaId, () => getAnalysis(id))
+}
+
+/** Polls the job returned by `first` while the footage and run stay current. */
+async function follow(mediaId: string, first: () => Promise<Analysis>) {
   const run = ++currentRun
   const { setAnalysis, setDetectedFaces } = useProjectStore.getState()
   const isCurrent = () => {
@@ -24,9 +39,10 @@ export async function analyzeFootage(mediaId: string) {
     )
   }
 
-  setAnalysis({ status: 'running' })
   try {
-    let analysis: Analysis = await createAnalysis(mediaId)
+    let analysis = await first()
+    if (!isCurrent()) return
+    setAnalysis({ status: 'running', id: analysis.id })
     let pollErrors = 0
     while (analysis.status === 'queued' || analysis.status === 'preparing') {
       await wait(POLL_MS)
