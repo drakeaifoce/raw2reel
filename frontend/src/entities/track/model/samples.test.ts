@@ -1,22 +1,28 @@
 import { expect, test } from 'vitest'
 import { parseSampleName } from './samples'
 
-test('reads title, mood and tempo from the file name', () => {
-  expect(parseSampleName('../samples/Phonk drive - Hard-hitting - 140.mp3')).toEqual({
-    title: 'Phonk drive',
-    mood: 'Hard-hitting',
-    bpm: 140,
-  })
-  expect(parseSampleName('../samples/Sunny pop - 118bpm - Upbeat.wav')).toEqual({
-    title: 'Sunny pop',
-    mood: 'Upbeat',
-    bpm: 118,
+test('reads artist and title of a released track and drops bracketed tags', () => {
+  expect(parseSampleName('../samples/Emin Nilsen - BANE [NCS Release].mp3')).toEqual({
+    title: 'BANE',
+    artist: 'Emin Nilsen',
+    mood: 'Sample',
+    bpm: undefined,
   })
 })
 
-test('falls back when mood and tempo are missing', () => {
+test('takes an optional tempo part', () => {
+  expect(parseSampleName('../samples/X972, sk3tch01 - Montagem Toma - 130bpm.mp3')).toEqual({
+    title: 'Montagem Toma',
+    artist: 'X972, sk3tch01',
+    mood: 'Sample',
+    bpm: 130,
+  })
+})
+
+test('uses the whole name as the title when there is no artist', () => {
   expect(parseSampleName('../samples/Night ride.m4a')).toEqual({
     title: 'Night ride',
+    artist: undefined,
     mood: 'Sample',
     bpm: undefined,
   })

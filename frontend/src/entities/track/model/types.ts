@@ -3,6 +3,8 @@ export type Track = {
   id: string
   title: string
   mood: string
+  /** Performer of a released sample, shown instead of the mood. */
+  artist?: string
   /** Known tempo of a preset; unknown for user uploads. */
   bpm?: number
   /** Stored audio sent to the renderer; a sample gets one once it is uploaded. */

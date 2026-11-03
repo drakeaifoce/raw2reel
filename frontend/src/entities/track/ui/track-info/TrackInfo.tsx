@@ -6,7 +6,7 @@ export function TrackInfo({ track }: { track: Track }) {
     <span className={styles.info}>
       <span className={styles.title}>{track.title}</span>
       <span className={styles.meta}>
-        {track.bpm ? `${track.mood} · ${track.bpm} BPM` : track.mood}
+        {[track.artist ?? track.mood, track.bpm && `${track.bpm} BPM`].filter(Boolean).join(' · ')}
       </span>
     </span>
   )
