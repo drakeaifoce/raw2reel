@@ -11,7 +11,7 @@ let currentRun = 0
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Starts Muse Vision face discovery for uploaded footage and polls until it settles.
+ * Starts face discovery (SAM 3.1 + Muse Spark) for uploaded footage and polls until it settles.
  * Results are dropped if the footage changed or a newer run started meanwhile.
  */
 export function analyzeFootage(mediaId: string) {
@@ -60,10 +60,10 @@ async function follow(mediaId: string, first: () => Promise<Analysis>) {
     if (analysis.status === 'failed') {
       setAnalysis({
         status: 'failed',
-        message: jobErrorMessage(analysis.error) ?? 'Muse Vision could not analyse this video.',
+        message: jobErrorMessage(analysis.error) ?? 'Could not find people in this video.',
       })
     } else if (analysis.people.length === 0) {
-      setAnalysis({ status: 'failed', message: 'Muse Vision found no people in this video.' })
+      setAnalysis({ status: 'failed', message: 'No people found in this video.' })
     } else {
       setDetectedFaces(analysis.id, facesFromAnalysis(analysis.people))
     }

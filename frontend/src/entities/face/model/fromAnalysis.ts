@@ -4,7 +4,7 @@ import type { Face } from './types'
 
 const TONES = ['#8FA8D9', '#D9A98F', '#A8D98F', '#C9A0D9', '#8FD9C9', '#D98F9E']
 
-/** Turns people found by Muse Vision into selectable faces, most visible first. */
+/** Turns people found by face discovery into selectable faces, most visible first. */
 export function facesFromAnalysis(people: AnalysisPerson[]): Face[] {
   return [...people]
     .sort((a, b) => b.observationCount - a.observationCount)

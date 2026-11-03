@@ -4,7 +4,7 @@ import type { Face } from '@/entities/face/@x/project'
 import type { Track } from '@/entities/track/@x/project'
 import type { Video } from '@/entities/video/@x/project'
 
-/** Muse Vision face discovery for uploaded footage; samples skip it. */
+/** Face discovery for uploaded footage; samples skip it. */
 export type FootageAnalysis =
   | { status: 'idle' }
   /** `id` is known once the backend accepted the job. */

@@ -2,7 +2,7 @@ import { requestJson } from './request'
 
 export type AnalysisStatus = 'queued' | 'preparing' | 'done' | 'failed'
 
-/** A person Muse Vision found in the footage. */
+/** A person face discovery found in the footage. */
 export type AnalysisPerson = {
   id: string
   /** Anonymous label, never a real name. */

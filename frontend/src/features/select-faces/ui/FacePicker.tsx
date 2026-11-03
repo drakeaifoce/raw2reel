@@ -17,7 +17,7 @@ export function FacePicker() {
   if (!video) {
     return (
       <p className={clsx(styles.hint, styles.empty)}>
-        Muse Vision lists every face it finds once you add footage.
+        SAM 3.1 lists every person it finds once you add footage.
       </p>
     )
   }
@@ -34,7 +34,8 @@ export function FacePicker() {
       <div className={styles.row}>
         <p className={clsx(styles.hint, styles.status)} role="status">
           <PulseDot />
-          Muse Vision is finding people in your footage. This takes a few minutes.
+          SAM 3.1 is finding people scene by scene and Muse Spark is grouping them. This takes a few
+          minutes.
         </p>
         {skipButton}
       </div>
@@ -75,7 +76,7 @@ export function FacePicker() {
   return (
     <>
       <p className={styles.hint}>
-        Muse Vision found {pluralize(video.faces.length, 'face')}. Tap the people the edit should
+        Found {pluralize(video.faces.length, 'person', 'people')}. Tap the people the edit should
         follow.
       </p>
       <ul className={styles.faces} aria-label="Detected faces">

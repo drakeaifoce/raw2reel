@@ -79,7 +79,7 @@ test('reports an analysis without people as a failure', async () => {
   await analyzeFootage('media-1')
   expect(useProjectStore.getState().analysis).toEqual({
     status: 'failed',
-    message: 'Muse Vision found no people in this video.',
+    message: 'No people found in this video.',
   })
 })
 

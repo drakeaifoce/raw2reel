@@ -9,6 +9,6 @@ export type Video = {
   meta: string
   /** Placeholder poster tint until real thumbnails are available. */
   tone: string
-  /** Faces Muse Vision detected in the footage (mocked for now). */
+  /** Faces found in the footage; mocked for samples. */
   faces: Face[]
 }

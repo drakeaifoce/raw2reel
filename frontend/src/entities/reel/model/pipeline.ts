@@ -3,28 +3,34 @@ import type { PipelineStep, PipelineStepStatus } from './types'
 
 type PipelineParams = {
   faceCount: number
+  /** Whether the edit has a soundtrack to cut to. */
+  hasMusic: boolean
   /** Tempo of the soundtrack, when known. */
   bpm?: number
 }
 
-export function buildPipelineSteps({ faceCount, bpm }: PipelineParams): PipelineStep[] {
+/** Mirrors the stages of the AI service's render job, in order. */
+export function buildPipelineSteps({ faceCount, hasMusic, bpm }: PipelineParams): PipelineStep[] {
   return [
-    { agent: 'Muse Vision', text: 'scanning every frame for motion peaks and highlights' },
     {
-      agent: 'Muse Vision',
+      agent: 'SAM 3.1',
       text:
         faceCount > 0
-          ? `locking on ${pluralize(faceCount, 'selected face')}, dropping shots without them`
-          : 'keeping the whole frame and picking the strongest shots',
+          ? `tracking ${pluralize(faceCount, 'selected person', 'selected people')} through every scene`
+          : 'keeping the whole frame, no one to follow',
     },
-    { agent: 'Muse Voice', text: 'transcribing speech into word-timed captions' },
-    { agent: 'Muse Spark', text: 'reading the story and choosing a hook for the first 2 seconds' },
-    {
-      agent: 'Muse Spark',
-      text: bpm
-        ? `mapping the beat grid at ${bpm} BPM and cutting on downbeats`
-        : 'mapping the beat grid and cutting on downbeats',
-    },
+    ...(hasMusic
+      ? [
+          {
+            agent: 'Beat sync',
+            text: bpm
+              ? `finding the downbeats at ${bpm} BPM`
+              : 'finding the downbeats in your track',
+          },
+        ]
+      : []),
+    { agent: 'Muse Spark', text: 'shortlisting the strongest moments from speech and action' },
+    { agent: 'Muse Spark', text: 'watching the shortlist and planning the cut' },
     { agent: 'Render', text: 'reframing to 9:16, burning in captions, mixing audio' },
   ]
 }

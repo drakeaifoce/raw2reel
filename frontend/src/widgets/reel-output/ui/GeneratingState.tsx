@@ -13,7 +13,7 @@ export function GeneratingState() {
   const progress = useReelStore((state) => state.progress)
 
   const percent = Math.floor(progress)
-  const steps = buildPipelineSteps({ faceCount, bpm: track?.bpm })
+  const steps = buildPipelineSteps({ faceCount, hasMusic: Boolean(track), bpm: track?.bpm })
   const trackingLabel =
     faceCount === 0 ? 'Whole frame' : faceCount === 1 ? 'Person 1' : `${faceCount} faces`
 
@@ -31,7 +31,7 @@ export function GeneratingState() {
         <div className={layout.heading}>
           <Eyebrow>
             <PulseDot />
-            Muse is editing
+            Editing your reel
           </Eyebrow>
           <span className={styles.percent}>{percent}%</span>
         </div>

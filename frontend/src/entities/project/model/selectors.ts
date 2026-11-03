@@ -11,7 +11,7 @@ export const selectTrack = ({ trackId, customTrack }: TrackState): Track | undef
 export function useMissingRequirement(): string | null {
   return useProjectStore((state) => {
     if (!state.video) return 'Add a video or pick a sample to start.'
-    if (state.analysis.status === 'running') return 'Muse Vision is still finding people.'
+    if (state.analysis.status === 'running') return 'Still finding people in your footage.'
     if (state.analysis.status === 'failed') return 'Face detection failed. Retry or replace it.'
     if (state.analysis.status !== 'skipped' && state.faceIds.length === 0)
       return 'Pick at least one face to keep in frame.'
