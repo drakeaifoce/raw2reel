@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useState } from 'react'
 import { useProjectStore, useSelectedTrack } from '@/entities/project'
 import { BeatGrid, MOCK_BEAT_SEGMENTS, useReelStore } from '@/entities/reel'
 import { DownloadReelButton } from '@/features/download-reel'
@@ -7,43 +7,13 @@ import { mediaUrl } from '@/shared/api'
 import { pluralize } from '@/shared/lib'
 import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
-import { CheckIcon, ExpandIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
+import { CheckIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
 import { usePlaybackMock } from '../model/usePlaybackMock'
 import styles from './ResultState.module.css'
 import layout from './StageLayout.module.css'
 
 const MOCK_DURATION_SEC = 27
-
-type FullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
-
-/**
- * Takes the player wrapper full screen, not the video: browsers stretch a full-screen
- * `<video>` to the whole display, while the wrapper keeps it at 9:16. iOS Safari only
- * lets the video itself go full screen, through a prefixed API.
- */
-function toggleFullscreen(player: HTMLElement, video: FullscreenVideo) {
-  if (document.fullscreenElement) {
-    void document.exitFullscreen()
-  } else if (typeof player.requestFullscreen === 'function') {
-    player.requestFullscreen().catch(() => video.webkitEnterFullscreen?.())
-  } else {
-    video.webkitEnterFullscreen?.()
-  }
-}
-
-/** Whether `element` is the one shown full screen. */
-function useIsFullscreen(element: RefObject<HTMLElement | null>) {
-  const [fullscreen, setFullscreen] = useState(false)
-
-  useEffect(() => {
-    const sync = () => setFullscreen(document.fullscreenElement === element.current)
-    document.addEventListener('fullscreenchange', sync)
-    return () => document.removeEventListener('fullscreenchange', sync)
-  }, [element])
-
-  return fullscreen
-}
 
 const formatDuration = (seconds: number) => {
   const whole = Math.round(seconds)
@@ -57,9 +27,6 @@ export function ResultState() {
   const resultMediaId = useReelStore((state) => state.resultMediaId)
   // The render job only knows the requested length; the reel itself can be shorter.
   const [duration, setDuration] = useState<number>()
-  const videoRef = useRef<FullscreenVideo>(null)
-  const playerRef = useRef<HTMLDivElement>(null)
-  const fullscreen = useIsFullscreen(playerRef)
   // The media route answers Range requests, so the reel streams and seeks directly.
   const src = resultMediaId ? mediaUrl(resultMediaId) : undefined
 
@@ -77,33 +44,17 @@ export function ResultState() {
     <div className={layout.layout}>
       {src ? (
         <PhoneFrame width={280} tone={video?.tone}>
-          <div ref={playerRef} className={styles.player}>
-            <video
-              ref={videoRef}
-              className={styles.video}
-              src={src}
-              controls
-              // Our button takes the 9:16 wrapper full screen instead.
-              controlsList="nofullscreen"
-              playsInline
-              preload="metadata"
-              aria-label="Generated reel"
-              onLoadedMetadata={({ currentTarget }) => {
-                if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
-              }}
-            />
-            <button
-              type="button"
-              className={styles.fullscreen}
-              onClick={() => {
-                if (playerRef.current && videoRef.current)
-                  toggleFullscreen(playerRef.current, videoRef.current)
-              }}
-            >
-              <ExpandIcon size={14} />
-              {fullscreen ? 'Exit full screen' : 'Full screen'}
-            </button>
-          </div>
+          <video
+            className={styles.video}
+            src={src}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label="Generated reel"
+            onLoadedMetadata={({ currentTarget }) => {
+              if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
+            }}
+          />
         </PhoneFrame>
       ) : (
         <MockPreview tone={video?.tone} />
