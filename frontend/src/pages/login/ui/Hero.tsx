@@ -2,11 +2,11 @@ import { Eyebrow } from '@/shared/ui/eyebrow'
 import styles from './Hero.module.css'
 
 const STEPS = [
-  'Upload one raw video or pick a sample',
-  'SAM 3.1 finds every person, and you choose who stays in frame',
-  'Add a soundtrack, and the cuts land on its beats',
-  'Muse Spark picks the moments, Muse Voice captions the speech',
-  'Get a reframed, captioned 9:16 reel',
+  'Upload a video or pick a sample',
+  'Choose the characters to keep in frame',
+  'Add a track to sync cuts to the beat',
+  'AI builds a story arc with complete dialogue',
+  'Download your reframed, captioned 9:16 reel',
 ]
 
 export function Hero() {
