@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useProjectStore, useSelectedTrack } from '@/entities/project'
 import { BeatGrid, MOCK_BEAT_SEGMENTS, useReelStore } from '@/entities/reel'
 import { DownloadReelButton } from '@/features/download-reel'
@@ -19,13 +19,32 @@ const MOCK_DURATION_SEC = 27
 
 type FullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
 
-/** iOS Safari only lets the video itself go full screen, through a prefixed API. */
-function enterFullscreen(video: FullscreenVideo) {
-  if (typeof video.requestFullscreen === 'function') {
-    video.requestFullscreen().catch(() => video.webkitEnterFullscreen?.())
+/**
+ * Takes the player wrapper full screen, not the video: browsers stretch a full-screen
+ * `<video>` to the whole display, while the wrapper keeps it at 9:16. iOS Safari only
+ * lets the video itself go full screen, through a prefixed API.
+ */
+function toggleFullscreen(player: HTMLElement, video: FullscreenVideo) {
+  if (document.fullscreenElement) {
+    void document.exitFullscreen()
+  } else if (typeof player.requestFullscreen === 'function') {
+    player.requestFullscreen().catch(() => video.webkitEnterFullscreen?.())
   } else {
     video.webkitEnterFullscreen?.()
   }
+}
+
+/** Whether `element` is the one shown full screen. */
+function useIsFullscreen(element: RefObject<HTMLElement | null>) {
+  const [fullscreen, setFullscreen] = useState(false)
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === element.current)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [element])
+
+  return fullscreen
 }
 
 const formatDuration = (seconds: number) => {
@@ -41,6 +60,8 @@ export function ResultState() {
   // The render job only knows the requested length; the reel itself can be shorter.
   const [duration, setDuration] = useState<number>()
   const videoRef = useRef<FullscreenVideo>(null)
+  const playerRef = useRef<HTMLDivElement>(null)
+  const fullscreen = useIsFullscreen(playerRef)
   const media = useMediaSource(resultMediaId)
   // Until the reel is buffered, download straight from the stream.
   const downloadHref = media?.loading && resultMediaId ? mediaUrl(resultMediaId) : media?.src
@@ -65,12 +86,14 @@ export function ResultState() {
               Loading your reel…
             </p>
           ) : (
-            <>
+            <div ref={playerRef} className={styles.player}>
               <video
                 ref={videoRef}
                 className={styles.video}
                 src={media.src}
                 controls
+                // Our button takes the 9:16 wrapper full screen instead.
+                controlsList="nofullscreen"
                 playsInline
                 preload="metadata"
                 aria-label="Generated reel"
@@ -81,12 +104,15 @@ export function ResultState() {
               <button
                 type="button"
                 className={styles.fullscreen}
-                onClick={() => videoRef.current && enterFullscreen(videoRef.current)}
+                onClick={() => {
+                  if (playerRef.current && videoRef.current)
+                    toggleFullscreen(playerRef.current, videoRef.current)
+                }}
               >
                 <ExpandIcon size={14} />
-                Full screen
+                {fullscreen ? 'Exit full screen' : 'Full screen'}
               </button>
-            </>
+            </div>
           )}
         </PhoneFrame>
       ) : (
