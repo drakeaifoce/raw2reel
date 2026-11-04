@@ -145,18 +145,6 @@
   aspect-ratio: 9 / 16;
 }
 
-.loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--color-text-muted);
-}
-
 .fullscreen {
   position: absolute;
   right: 12px;

@@ -9,8 +9,6 @@ import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
 import { CheckIcon, ExpandIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
-import { Spinner } from '@/shared/ui/spinner'
-import { useMediaSource } from '../model/useMediaSource'
 import { usePlaybackMock } from '../model/usePlaybackMock'
 import styles from './ResultState.module.css'
 import layout from './StageLayout.module.css'
@@ -62,9 +60,8 @@ export function ResultState() {
   const videoRef = useRef<FullscreenVideo>(null)
   const playerRef = useRef<HTMLDivElement>(null)
   const fullscreen = useIsFullscreen(playerRef)
-  const media = useMediaSource(resultMediaId)
-  // Until the reel is buffered, download straight from the stream.
-  const downloadHref = media?.loading && resultMediaId ? mediaUrl(resultMediaId) : media?.src
+  // The media route answers Range requests, so the reel streams and seeks directly.
+  const src = resultMediaId ? mediaUrl(resultMediaId) : undefined
 
   const length = resultMediaId ? duration : MOCK_DURATION_SEC
   const summary = [
@@ -78,42 +75,35 @@ export function ResultState() {
 
   return (
     <div className={layout.layout}>
-      {media ? (
+      {src ? (
         <PhoneFrame width={280} tone={video?.tone}>
-          {media.loading ? (
-            <p className={styles.loading} role="status">
-              <Spinner size={24} />
-              Loading your reel…
-            </p>
-          ) : (
-            <div ref={playerRef} className={styles.player}>
-              <video
-                ref={videoRef}
-                className={styles.video}
-                src={media.src}
-                controls
-                // Our button takes the 9:16 wrapper full screen instead.
-                controlsList="nofullscreen"
-                playsInline
-                preload="metadata"
-                aria-label="Generated reel"
-                onLoadedMetadata={({ currentTarget }) => {
-                  if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
-                }}
-              />
-              <button
-                type="button"
-                className={styles.fullscreen}
-                onClick={() => {
-                  if (playerRef.current && videoRef.current)
-                    toggleFullscreen(playerRef.current, videoRef.current)
-                }}
-              >
-                <ExpandIcon size={14} />
-                {fullscreen ? 'Exit full screen' : 'Full screen'}
-              </button>
-            </div>
-          )}
+          <div ref={playerRef} className={styles.player}>
+            <video
+              ref={videoRef}
+              className={styles.video}
+              src={src}
+              controls
+              // Our button takes the 9:16 wrapper full screen instead.
+              controlsList="nofullscreen"
+              playsInline
+              preload="metadata"
+              aria-label="Generated reel"
+              onLoadedMetadata={({ currentTarget }) => {
+                if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
+              }}
+            />
+            <button
+              type="button"
+              className={styles.fullscreen}
+              onClick={() => {
+                if (playerRef.current && videoRef.current)
+                  toggleFullscreen(playerRef.current, videoRef.current)
+              }}
+            >
+              <ExpandIcon size={14} />
+              {fullscreen ? 'Exit full screen' : 'Full screen'}
+            </button>
+          </div>
         </PhoneFrame>
       ) : (
         <MockPreview tone={video?.tone} />
@@ -144,7 +134,7 @@ export function ResultState() {
         )}
 
         <div className={styles.actions}>
-          <DownloadReelButton href={downloadHref} className={styles.primaryAction} />
+          <DownloadReelButton href={src} className={styles.primaryAction} />
           <RestartReelButton className={styles.secondaryAction} />
         </div>
         <p className={styles.note}>
