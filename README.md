@@ -39,10 +39,12 @@ Each app is self-contained: its own dependencies, scripts, linters and README.
 3. `POST /api/renders` queues generation with the analysis, selected people and
    optional soundtrack. The worker sends the source and saved analysis to `/v2/render`.
 4. Spark selects material and watches a bounded review montage **with source audio**.
-   It chooses a complete spoken setup, then reaction/action highlights. Setup length
+   It chooses a context-rich spoken setup, preferably 6–10 seconds and at least
+   12 words, then reaction/action highlights. Isolated short reactions are discouraged. Setup length
    follows the end of the thought, not a fixed 6–8 second timer: normally one or two
    shots, up to 14 seconds, leaving at least six seconds for impact.
-5. The setup is checked against complete source utterances in reviewed footage,
+5. The setup is checked against complete source utterances and adjacent dialogue
+   in reviewed footage,
    with short context guards; it is extended to the spoken boundary when possible.
    Unreviewed gaps are never filled. Code assembles 600 frames at 30 FPS. The impact section uses fast 0.4–0.9 second
    shots, reusing approved footage when needed. Original audio and captions stop at

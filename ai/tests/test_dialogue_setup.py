@@ -72,3 +72,37 @@ def test_partial_or_different_asr_text_cannot_cut_a_phrase_short():
         clips, "A complete long thought.", [dict(startMs=0, endMs=780, transcript="A")]
     )
     assert result == clips
+
+
+def test_short_reaction_is_expanded_with_preceding_dialogue_context():
+    original = EditPlan(
+        narrative="setup",
+        impact_start=3.6,
+        music_start=0,
+        clips=[
+            dict(start=179.36, end=182.96, reason="isolated reaction", person_ids=["p1"]),
+            dict(start=190, end=194, reason="impact", person_ids=["p1"]),
+        ],
+    )
+    setup = complete_dialogue(
+        original,
+        [
+            dict(startMs=174700, endMs=178380, transcript="I like standing next to you, Sean."),
+            dict(startMs=178620, endMs=181740, transcript="Makes me look so tough."),
+        ],
+        [Interval(start=173.84, end=177.42725), Interval(start=177.42725, end=184.184)],
+    )
+    assert "standing next to you" in setup.quote and "Makes me look so tough" in setup.quote
+    assert 6 <= sum(c.end - c.start for c in setup.clips) <= 10
+    assert len(setup.clips) <= 2
+
+
+def test_unreliable_asr_cannot_collapse_context_rich_setup_to_one_second():
+    from raw2reel_ai.cloud_models import EditClip
+    from raw2reel_ai.dialogue_setup import finish_at_speech_end
+
+    quote = "I like standing next to you Sean. Makes me look so tough."
+    clips = [EditClip(start=10, end=17, reason="context", person_ids=["p1"])]
+    assert (
+        finish_at_speech_end(clips, quote, [dict(startMs=0, endMs=780, transcript=quote)]) == clips
+    )
