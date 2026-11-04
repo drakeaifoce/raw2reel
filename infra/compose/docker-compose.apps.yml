@@ -14,7 +14,8 @@ services:
     image: raw2reel/frontend:${FRONTEND_TAG:?нужен FRONTEND_TAG}
     restart: unless-stopped
     networks: [edge]
-    mem_limit: 128m
+    # Отдаёт собранную статику, больше ей не нужно.
+    mem_limit: 192m
 
   backend:
     image: raw2reel/backend:${BACKEND_TAG:?нужен BACKEND_TAG}
@@ -28,7 +29,10 @@ services:
       nats:
         condition: service_healthy
     networks: [edge]
-    mem_limit: 384m
+    # HTTP, стриминг медиа с перемоткой и копирование сэмплов — всё потоком,
+    # но заголовки, буферы сокетов и Bun на пиковых запросах берут заметно
+    # больше холостых 70 МБ.
+    mem_limit: 768m
 
   ai:
     image: raw2reel/ai:${AI_TAG:?нужен AI_TAG}
@@ -40,8 +44,9 @@ services:
       CLOUD_DISCOVERY_FRAMES: "16"
       CLOUD_MAX_OBSERVATIONS: "32"
     networks: [edge]
-    # Рендер гоняет ffmpeg, и это самый жадный до памяти сервис
-    mem_limit: 640m
+    # Самый жадный сервис: ffmpeg держит кадры и промежуточные дорожки, а
+    # разбор догружает превью. При 640 МБ он был ближе всех к потолку.
+    mem_limit: 2048m
 
   # Воркер рендера: тот же образ, что у бэкенда, но другая команда. Отдельный
   # процесс потому, что рендер занимает минуты и делить его с HTTP-сервером
@@ -67,7 +72,7 @@ services:
     networks: [edge]
     # Результат рендера буферизуется в памяти перед записью в Blob: это готовый
     # рилс до 30 секунд, единицы мегабайт. Исходник в память не попадает.
-    mem_limit: 512m
+    mem_limit: 1024m
 
   # Очередь задач рендера. JetStream нужен именно персистентный: задача живёт
   # минуты, и терять её при перезапуске нельзя. Наружу не публикуется — только
@@ -82,7 +87,8 @@ services:
     volumes:
       - nats-data:/data
     networks: [edge]
-    mem_limit: 128m
+    # Очередь хранит задачи на диске, в памяти держит только активные.
+    mem_limit: 256m
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
       interval: 15s
