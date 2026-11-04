@@ -9,29 +9,52 @@ type PipelineParams = {
   bpm?: number
 }
 
-/** Mirrors the stages of the AI service's render job, in order. */
+/** Length of the cut the AI service plans, in seconds. */
+const EDIT_SECONDS = 20
+
+/**
+ * Mirrors the stages of the AI service's render job, in order. The job reports no
+ * stage, so the progress bar walks through them on an estimate.
+ */
 export function buildPipelineSteps({ faceCount, hasMusic, bpm }: PipelineParams): PipelineStep[] {
   return [
     {
-      agent: 'SAM 3.1',
+      agent: 'People tracking',
       text:
         faceCount > 0
-          ? `tracking ${pluralize(faceCount, 'selected person', 'selected people')} through every scene`
-          : 'keeping the whole frame, no one to follow',
+          ? `SAM 3.1 locks onto ${pluralize(faceCount, 'selected person', 'selected people')}, scene by scene`
+          : 'SAM 3.1 follows everyone it found in your footage, scene by scene',
     },
     ...(hasMusic
       ? [
           {
-            agent: 'Beat sync',
+            agent: 'Beat detection',
             text: bpm
-              ? `finding the downbeats at ${bpm} BPM`
-              : 'finding the downbeats in your track',
+              ? `mapping the downbeats at ${bpm} BPM and finding the drop`
+              : 'measuring the tempo and finding the drop in your track',
           },
         ]
       : []),
-    { agent: 'Muse Spark', text: 'shortlisting the strongest moments from speech and action' },
-    { agent: 'Muse Spark', text: 'watching the shortlist and planning the cut' },
-    { agent: 'Render', text: 'reframing to 9:16, burning in captions, mixing audio' },
+    {
+      agent: 'Moment shortlist',
+      text: 'Muse Spark reads the transcript for a dialogue setup and reaction highlights',
+    },
+    {
+      agent: 'Edit plan',
+      text: `Muse Spark watches the shortlist and plans a ${EDIT_SECONDS}s cut: story setup, then impact`,
+    },
+    {
+      agent: 'Assembly',
+      text: hasMusic
+        ? 'landing impact shots on the beats and captioning the dialogue'
+        : 'trimming the shots and captioning the dialogue',
+    },
+    {
+      agent: 'Render',
+      text: hasMusic
+        ? 'reframing to 9:16 around your people and mixing in the music'
+        : 'reframing to 9:16 around your people, keeping the dialogue audio',
+    },
   ]
 }
 

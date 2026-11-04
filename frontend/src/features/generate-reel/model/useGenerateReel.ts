@@ -6,7 +6,8 @@ import { useReelStore } from '@/entities/reel'
 const REEL_DURATION_SEC = 15
 
 /**
- * Renders the selected footage. Without a finished analysis the renderer cuts the whole frame.
+ * Renders the selected footage. Without a finished analysis the worker finds people itself
+ * and follows the ones seen most.
  */
 export function useGenerateReel() {
   const render = useReelStore((state) => state.render)

@@ -25,7 +25,7 @@ export function FacePicker() {
   const { mediaId } = video
   const skipButton = (
     <Button size="sm" onClick={skipAnalysis}>
-      Use the whole frame
+      Let AI choose
     </Button>
   )
 
@@ -59,7 +59,7 @@ export function FacePicker() {
   if (analysis.status === 'skipped') {
     return (
       <div className={styles.row}>
-        <p className={styles.hint}>The reel will use the whole frame, without following anyone.</p>
+        <p className={styles.hint}>The reel will follow the people who appear most.</p>
         {mediaId && (
           <Button size="sm" onClick={() => void analyzeFootage(mediaId)}>
             Find faces

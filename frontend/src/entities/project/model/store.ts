@@ -11,7 +11,7 @@ export type FootageAnalysis =
   | { status: 'running'; id?: string }
   | { status: 'done'; id: string }
   | { status: 'failed'; message: string }
-  /** The user chose to render the whole frame without waiting for faces. */
+  /** The user chose to let the worker pick people instead of waiting for faces. */
   | { status: 'skipped' }
 
 /** Upload of a bundled sample to the user's media, so the renderer can mix it in. */
@@ -38,7 +38,7 @@ type ProjectActions = {
   setAnalysis: (analysis: FootageAnalysis) => void
   /** Stores faces found by a finished analysis and pre-selects the most visible one. */
   setDetectedFaces: (analysisId: string, faces: Face[]) => void
-  /** Drops face discovery so the reel is cut from the whole frame. */
+  /** Drops face discovery; the worker then follows the people seen most. */
   skipAnalysis: () => void
   toggleFace: (faceId: string) => void
   selectTrack: (trackId: string) => void

@@ -32,7 +32,7 @@ test('renders the selected people of a finished analysis', () => {
   )
 })
 
-test('renders the whole frame when face discovery was skipped', () => {
+test('renders from the source when face discovery was skipped', () => {
   useProjectStore.getState().skipAnalysis()
   renderHook(() => useGenerateReel()).result.current()
 

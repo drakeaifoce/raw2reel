@@ -20,7 +20,7 @@ export function GeneratingState() {
   // The bar is estimated and parks near the end until the worker reports done.
   const finalStep = getStepStatus(steps.length - 1, steps.length, progress) === 'active'
   const trackingLabel =
-    faceCount === 0 ? 'Whole frame' : faceCount === 1 ? 'Person 1' : `${faceCount} faces`
+    faceCount === 0 ? 'Everyone' : faceCount === 1 ? 'Person 1' : `${faceCount} faces`
 
   return (
     <div className={layout.layout}>
