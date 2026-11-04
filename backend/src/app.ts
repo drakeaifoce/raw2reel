@@ -5,6 +5,7 @@ import { createDatabaseService, type DatabaseRepository } from './database'
 import { createRenderQueue, type RenderQueue } from './queue'
 import { createRenderJobService, type RenderJob, type RenderJobRepository } from './render-jobs'
 import { createMediaService, type MediaRepository } from './media'
+import { contentRange, parseRange, unsatisfiableRange } from './range'
 import { createAnalysisService, type AnalysisRecord, type AnalysisRepository } from './analyses'
 import { createAuthService } from './auth'
 import type { IdentityService, Principal, TokenPair } from './identity'
@@ -261,6 +262,67 @@ const publicMedia = ({
   size,
   createdAt,
 }: Awaited<ReturnType<MediaRepository['create']>>) => ({ id, name, type, size, createdAt })
+
+/**
+ * Отдаёт файл из хранилища, поддерживая перемотку. Без Accept-Ranges браузер
+ * даже не пробует запросить кусок и тянет видео целиком, прежде чем пустить
+ * пользователя на нужную секунду.
+ *
+ * Общая для /media/{id} и содержимого сэмпла: тела ответов должны совпадать,
+ * иначе плеер поведёт себя по-разному на своём и на готовом файле.
+ */
+async function streamMedia(
+  request: Request,
+  media: MediaRepository,
+  id: string,
+  ownerId: string,
+  cacheControl: string,
+  notFound: () => Response,
+): Promise<Response> {
+  const head = await media.get(id, ownerId)
+  if (!head) return notFound()
+  const size = head.metadata.size
+  const wanted = parseRange(request.headers.get('range'), size)
+
+  const headers: Record<string, string> = {
+    'content-type': head.metadata.type,
+    'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(head.metadata.name)}`,
+    'cache-control': cacheControl,
+    'accept-ranges': 'bytes',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+  }
+
+  if (wanted.kind === 'unsatisfiable') {
+    await head.body.cancel()
+    // Молча отдать файл целиком нельзя: плеер решит, что перемотка удалась,
+    // и покажет не то место.
+    return new Response(null, {
+      status: 416,
+      headers: { ...headers, 'content-range': unsatisfiableRange(size) },
+    })
+  }
+
+  if (wanted.kind === 'full') {
+    return new Response(head.body, {
+      headers: { ...headers, 'content-length': String(size) },
+    })
+  }
+
+  // Первый запрос открыл поток на весь файл — он больше не нужен.
+  await head.body.cancel()
+  const part = await media.get(id, ownerId, wanted.range)
+  if (!part) return notFound()
+  const { start, end } = wanted.range
+  return new Response(part.body, {
+    status: 206,
+    headers: {
+      ...headers,
+      'content-length': String(end - start + 1),
+      'content-range': contentRange(wanted.range, size),
+    },
+  })
+}
 
 const publicJob = ({
   id,
@@ -812,18 +874,9 @@ export async function handle(
     } catch {
       return error('media id has invalid URL encoding', 'INVALID_MEDIA_ID', 400)
     }
-    const stored = await dependencies.media.get(id, mediaPrincipal!.userId)
-    if (!stored) return error('media was not found', 'MEDIA_NOT_FOUND', 404)
-    return new Response(stored.body, {
-      headers: {
-        'content-type': stored.metadata.type,
-        'content-length': String(stored.metadata.size),
-        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(stored.metadata.name)}`,
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'content-security-policy': "default-src 'none'; sandbox",
-      },
-    })
+    return streamMedia(request, dependencies.media, id, mediaPrincipal!.userId, 'no-store', () =>
+      error('media was not found', 'MEDIA_NOT_FOUND', 404),
+    )
   }
 
   if (pathname === '/samples' && request.method === 'GET') {
@@ -835,6 +888,32 @@ export async function handle(
       return error('limit must be an integer from 1 to 100', 'INVALID_LIMIT', 400)
     }
     return json({ items: (await dependencies.media.list(limit, SAMPLES_OWNER)).map(publicMedia) })
+  }
+
+  // Содержимое сэмпла: нужно, чтобы трек можно было послушать, а видео
+  // посмотреть ДО выбора. /media/{id} для этого не годится — он привязан к
+  // владельцу, а сэмпл принадлежит служебному.
+  const sampleContentMatch = pathname.match(/^\/samples\/([^/]+)\/content$/)
+  if (sampleContentMatch && request.method === 'GET') {
+    if (!dependencies.media)
+      return error('media storage is not configured', 'DEPENDENCY_UNAVAILABLE', 503)
+    let id: string
+    try {
+      id = decodeURIComponent(sampleContentMatch[1]!)
+    } catch {
+      return error('sample id has invalid URL encoding', 'INVALID_SAMPLE_ID', 400)
+    }
+    // Кеш надолго: файлы неизменяемы, у каждого свой идентификатор. Именно
+    // private — ручка за авторизацией, и полагаться на «сэмплы у всех
+    // одинаковые» ради промежуточных кешей не стоит.
+    return streamMedia(
+      request,
+      dependencies.media,
+      id,
+      SAMPLES_OWNER,
+      'private, max-age=86400, immutable',
+      () => error('sample was not found', 'SAMPLE_NOT_FOUND', 404),
+    )
   }
 
   const sampleMatch = pathname.match(/^\/samples\/([^/]+)$/)

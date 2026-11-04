@@ -127,6 +127,44 @@ export function createOpenAPI() {
       },
     },
 
+    '/samples/{id}/content': {
+      get: {
+        summary: 'Stream a sample, with seeking',
+        description:
+          'Lets the client preview a sample before taking it. /media/{id} cannot serve this: it is owner-scoped, and samples belong to a service account.',
+        security: mediaSecurity,
+        parameters: [
+          parameter('id', 'path'),
+          {
+            name: 'Range',
+            in: 'header',
+            required: false,
+            schema: { type: 'string' },
+            description: 'RFC 7233 byte range, e.g. bytes=0-1023. One range only.',
+          },
+        ],
+        responses: {
+          ...commonErrors,
+          '200': {
+            description: 'Whole file. Accept-Ranges: bytes; cached privately for a day.',
+            content: {
+              'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+              'audio/*': { schema: { type: 'string', format: 'binary' } },
+              'video/*': { schema: { type: 'string', format: 'binary' } },
+            },
+          },
+          '206': {
+            description: 'The requested byte range; Content-Range carries the full size',
+            content: {
+              'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+            },
+          },
+          '404': response('No such sample (a private upload is not one)', ref('Error')),
+          '416': response('Range starts past the end of the file', ref('Error')),
+        },
+      },
+    },
+
     '/samples/{id}': {
       post: {
         summary: 'Take a sample as your own media',
@@ -278,14 +316,30 @@ export function createOpenAPI() {
 
     '/media/{id}': {
       get: {
-        summary: 'Stream an owned file',
+        summary: 'Stream an owned file, with seeking',
         security: mediaSecurity,
-        parameters: [parameter('id', 'path')],
+        parameters: [
+          parameter('id', 'path'),
+          {
+            name: 'Range',
+            in: 'header',
+            required: false,
+            schema: { type: 'string' },
+            description: 'RFC 7233 byte range, e.g. bytes=0-1023. One range only.',
+          },
+        ],
         responses: {
           ...commonErrors,
+          '206': {
+            description: 'The requested byte range; Content-Range carries the full size',
+            content: {
+              'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+            },
+          },
+          '416': response('Range starts past the end of the file', ref('Error')),
           '200': {
             description:
-              'Original MIME and bytes. nosniff; CSP default-src none; sandbox. No range contract.',
+              'Original MIME and bytes. Accept-Ranges: bytes. nosniff; CSP default-src none; sandbox.',
             content: {
               'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
               'video/*': { schema: { type: 'string', format: 'binary' } },

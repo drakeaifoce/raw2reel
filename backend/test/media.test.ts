@@ -306,3 +306,75 @@ describe('media repository ownership boundary', () => {
     })
   })
 })
+
+/**
+ * Без перемотки браузер тянет видео целиком, прежде чем пустить пользователя
+ * на нужную секунду. На готовом ролике это терпимо, на сэмпле-видео в 90 МБ
+ * уже нет — Дархан поэтому и просил отдавать медиа частями.
+ */
+describe('перемотка медиа', () => {
+  const BODY = '0123456789'
+
+  /** Хранилище, которое честно режет тело по запрошенному отрезку. */
+  const ranged = (): AppDependencies['media'] => ({
+    create: async () => metadata,
+    list: async () => [],
+    get: async (_id, _ownerId, range) => {
+      const full = { ...metadata, size: BODY.length }
+      const part = range ? BODY.slice(range.start, range.end + 1) : BODY
+      return {
+        metadata: full,
+        body: new Blob([part]).stream(),
+        ...(range ? { range } : {}),
+      } as StoredMedia
+    },
+  })
+
+  const fetchMedia = (headers: Record<string, string> = {}) =>
+    handle(
+      new Request('http://localhost/media/media-1', { headers }),
+      dependencies({ media: ranged() }),
+    )
+
+  test('без Range отдаёт файл целиком, но объявляет поддержку перемотки', async () => {
+    const response = await fetchMedia()
+    expect(response.status).toBe(200)
+    // Без этого заголовка браузер даже не попробует запросить кусок.
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(response.headers.get('content-length')).toBe('10')
+    expect(await response.text()).toBe(BODY)
+  })
+
+  test('отдаёт запрошенный отрезок с кодом 206', async () => {
+    const response = await fetchMedia({ range: 'bytes=2-5' })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 2-5/10')
+    expect(response.headers.get('content-length')).toBe('4')
+    expect(await response.text()).toBe('2345')
+  })
+
+  test('открытый справа отрезок тянется до конца файла', async () => {
+    const response = await fetchMedia({ range: 'bytes=7-' })
+    expect(response.status).toBe(206)
+    expect(response.headers.get('content-range')).toBe('bytes 7-9/10')
+    expect(await response.text()).toBe('789')
+  })
+
+  test('запрос за пределом файла — 416, а не тихая отдача целиком', async () => {
+    const response = await fetchMedia({ range: 'bytes=50-60' })
+    expect(response.status).toBe(416)
+    // Клиенту сообщаем настоящий размер, чтобы он переспросил корректно.
+    expect(response.headers.get('content-range')).toBe('bytes */10')
+    expect(await response.text()).toBe('')
+  })
+
+  test('чужое медиа остаётся недоступным и при запросе отрезка', async () => {
+    const response = await handle(
+      new Request('http://localhost/media/media-1', { headers: { range: 'bytes=0-1' } }),
+      dependencies({
+        media: { create: async () => metadata, get: async () => null, list: async () => [] },
+      }),
+    )
+    expect(response.status).toBe(404)
+  })
+})

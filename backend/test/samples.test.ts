@@ -128,3 +128,36 @@ describe('POST /samples/{id}', () => {
     expect(response.status).toBe(503)
   })
 })
+
+describe('GET /samples/{id}/content', () => {
+  const read = (id: string, deps: AppDependencies, headers: Record<string, string> = {}) =>
+    handle(new Request(`http://localhost/samples/${id}/content`, { headers }), deps)
+
+  test('отдаёт файл, чтобы его можно было послушать до выбора', async () => {
+    const response = await read('sample-track', dependencies())
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('audio/mpeg')
+    expect(response.headers.get('accept-ranges')).toBe('bytes')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    // Файлы неизменяемы, у каждого свой идентификатор — кешируем надолго,
+    // но private: ручка за авторизацией.
+    expect(response.headers.get('cache-control')).toContain('private')
+  })
+
+  test('чужую запись через содержимое не отдаёт', async () => {
+    const { media } = store([{ ...sample, id: 'private', ownerId: 'user-2' }])
+    const response = await read('private', dependencies({ media }))
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ code: 'SAMPLE_NOT_FOUND' })
+  })
+
+  test('требует проверенной сессии', async () => {
+    const response = await read(
+      'sample-track',
+      dependencies({
+        auth: { handler: async () => new Response('unused'), getSession: async () => null },
+      }),
+    )
+    expect(response.status).toBe(401)
+  })
+})

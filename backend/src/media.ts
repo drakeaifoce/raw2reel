@@ -3,6 +3,7 @@ import { BlobServiceClient, type ContainerClient } from '@azure/storage-blob'
 import { MongoClient, type Collection } from 'mongodb'
 import type { Config } from './config'
 import { ensureIndexes } from './mongo-indexes'
+import type { ByteRange } from './range'
 
 export type MediaMetadata = {
   id: string
@@ -15,11 +16,23 @@ export type MediaMetadata = {
   ownershipOperationId?: string
 }
 
-export type StoredMedia = { metadata: MediaMetadata; body: ReadableStream<Uint8Array> }
+export type StoredMedia = {
+  metadata: MediaMetadata
+  body: ReadableStream<Uint8Array>
+  /**
+   * Какой отрезок реально отдан. Есть только у частичного чтения — маршрут
+   * строит по нему Content-Range, а не вычисляет границы заново.
+   */
+  range?: ByteRange
+}
 
 export interface MediaRepository {
   create(file: File, ownerId: string): Promise<MediaMetadata>
-  get(id: string, ownerId: string): Promise<StoredMedia | null>
+  /**
+   * `range` запрашивает часть файла: нужен для перемотки в плеере, иначе
+   * браузер тянет видео целиком, прежде чем отдать перемотку пользователю.
+   */
+  get(id: string, ownerId: string, range?: ByteRange): Promise<StoredMedia | null>
   list(limit: number, ownerId: string): Promise<MediaMetadata[]>
   /**
    * Копия чужой записи себе. Нужна сэмплам: они принадлежат служебному
@@ -69,15 +82,19 @@ export class MediaService implements MediaRepository {
     return metadata
   }
 
-  async get(id: string, ownerId: string): Promise<StoredMedia | null> {
+  async get(id: string, ownerId: string, range?: ByteRange): Promise<StoredMedia | null> {
     await this.indexesReady
     const metadata = await this.collection.findOne({ id, ownerId }, { projection: { _id: 0 } })
     if (!metadata) return null
-    const download = await this.container.getBlobClient(metadata.blobKey).download()
+    // Границы в HTTP включительные, в SDK — смещение и количество байт.
+    const download = await this.container
+      .getBlobClient(metadata.blobKey)
+      .download(range?.start ?? 0, range ? range.end - range.start + 1 : undefined)
     if (!download.readableStreamBody) throw new Error('Blob response did not include a stream')
     return {
       metadata,
       body: Readable.toWeb(download.readableStreamBody) as ReadableStream<Uint8Array>,
+      ...(range ? { range } : {}),
     }
   }
 
