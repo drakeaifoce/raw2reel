@@ -7,7 +7,7 @@
  * одному и на параллельный запрос отвечает 429 — синхронный вызов держал бы
  * HTTP-запрос десять минут и отказывал второму пользователю.
  */
-import { AckPolicy, connect, type NatsConnection } from 'nats'
+import { AckPolicy, connect, type JsMsg, type NatsConnection } from 'nats'
 import type { Config } from './config'
 
 const STREAM = 'RENDER'
@@ -49,6 +49,9 @@ export interface RenderQueue {
 }
 
 export class NatsRenderQueue implements RenderQueue {
+  /** Сообщение, которое обрабатывается прямо сейчас, если такое есть. */
+  private current: JsMsg | undefined
+
   private constructor(private readonly nc: NatsConnection) {}
 
   static async connect(url: string): Promise<NatsRenderQueue> {
@@ -87,6 +90,7 @@ export class NatsRenderQueue implements RenderQueue {
       const messages = await consumer.fetch({ max_messages: 1, expires: 30_000 })
       for await (const message of messages) {
         const jobId = message.string()
+        this.current = message
         let outcome: QueueOutcome = 'failed'
         const heartbeat = setInterval(() => {
           // Сбой самого сигнала не должен ронять обработку: хуже, чем лишняя
@@ -104,6 +108,7 @@ export class NatsRenderQueue implements RenderQueue {
           outcome = 'retry-later'
         } finally {
           clearInterval(heartbeat)
+          this.current = undefined
         }
         if (outcome === 'done') message.ack()
         else if (outcome === 'retry-later') message.nak(RETRY_AFTER_MS)
@@ -117,6 +122,20 @@ export class NatsRenderQueue implements RenderQueue {
   }
 
   async close(): Promise<void> {
+    // Сообщение, взятое в работу, при простом разрыве связи остаётся
+    // «выданным», и JetStream вернёт его только по истечении ack_wait — то
+    // есть через пятнадцать минут. Каждая выкладка посреди рендера давала
+    // такой простой, и задача всё это время висела в rendering, хотя никто
+    // её не трогал. Возвращаем явно, с обычной паузой: соседние контейнеры
+    // в этот момент тоже перезапускаются.
+    if (this.current) {
+      try {
+        this.current.nak(RETRY_AFTER_MS)
+      } catch (error) {
+        console.warn('не удалось вернуть сообщение в очередь при остановке', error)
+      }
+      this.current = undefined
+    }
     await this.nc.drain()
   }
 }
