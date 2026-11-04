@@ -39,5 +39,6 @@ export const SAMPLE_TRACKS: Track[] = Object.entries(files)
   .sort(([a], [b]) => a.localeCompare(b))
   .map(([path, src]) => {
     const info = parseSampleName(path)
-    return { id: `sample-${slug(info.title)}`, ...info, src }
+    const fileName = path.split('/').pop() ?? path
+    return { id: `sample-${slug(info.title)}`, ...info, src, fileName }
   })

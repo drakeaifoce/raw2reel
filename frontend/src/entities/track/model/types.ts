@@ -11,4 +11,6 @@ export type Track = {
   mediaId?: string
   /** Bundled audio of a sample preset, playable and uploadable. */
   src?: string
+  /** Original file name of a sample, matching its copy in the backend catalog. */
+  fileName?: string
 }

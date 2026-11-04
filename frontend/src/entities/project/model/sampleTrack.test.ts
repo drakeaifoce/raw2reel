@@ -1,9 +1,14 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import type { MediaItem } from '@/shared/api'
 import { prepareSampleTrack } from './sampleTrack'
 import { selectTrack } from './selectors'
 import { useProjectStore } from './store'
 
-const api = vi.hoisted(() => ({ uploadMedia: vi.fn() }))
+const api = vi.hoisted(() => ({
+  uploadMedia: vi.fn(),
+  listSamples: vi.fn<() => Promise<MediaItem[]>>(() => Promise.reject(new Error('offline'))),
+  takeSample: vi.fn(),
+}))
 
 vi.mock('@/shared/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/shared/api')>()),
@@ -14,11 +19,18 @@ vi.mock('@/entities/track/@x/project', () => ({
   findTrack: (id: string | null) => (id === sample.id ? sample : undefined),
 }))
 
-const sample = { id: 'sample-night', title: 'Night', mood: 'Sample', src: '/assets/night.mp3' }
+const sample = {
+  id: 'sample-night',
+  title: 'Night',
+  mood: 'Sample',
+  src: '/assets/night.mp3',
+  fileName: 'Artist - Night.mp3',
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+  api.listSamples.mockImplementation(() => Promise.reject(new Error('offline')))
   useProjectStore.getState().reset()
 })
 
@@ -48,4 +60,21 @@ test('reports a failed sample upload so the user can retry', async () => {
   await prepareSampleTrack(sample)
 
   expect(useProjectStore.getState().samples[sample.id]?.status).toBe('failed')
+})
+
+test('takes a sample from the backend catalog instead of uploading it', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  api.listSamples.mockResolvedValue([
+    { id: 'catalog-1', name: 'Artist - Night.mp3', type: 'audio/mpeg', size: 1, createdAt: '' },
+  ])
+  api.takeSample.mockResolvedValue({ id: 'copy-1' })
+  useProjectStore.getState().selectTrack(sample.id)
+
+  await prepareSampleTrack(sample)
+
+  expect(api.takeSample).toHaveBeenCalledWith('catalog-1')
+  expect(api.uploadMedia).not.toHaveBeenCalled()
+  expect(fetchMock).not.toHaveBeenCalled()
+  expect(selectTrack(useProjectStore.getState())?.mediaId).toBe('copy-1')
 })
