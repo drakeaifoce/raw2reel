@@ -4,9 +4,12 @@
  * идёт изнутри контейнера бэкенда его же кодом, без дублирования логики
  * ключей и имён блобов.
  *
+ * Список приходит JSON-ом в stdin: [{ "path": "...", "name": "..." }].
+ * Именно так, а не аргументами: в именах треков бывают пробелы, запятые и
+ * скобки, и передача через argv по дороге к docker exec их разваливает.
+ *
  * Запускать не руками, а через seed-samples.sh.
  */
-import { basename } from 'node:path'
 import { config } from './src/config'
 import { createMediaService } from './src/media'
 
@@ -18,21 +21,34 @@ if (!media) {
   process.exit(1)
 }
 
-const paths = process.argv.slice(2)
-if (paths.length === 0) {
-  console.error('нужен хотя бы один файл')
+type Entry = { path: string; name: string }
+
+const input = await Bun.stdin.text()
+let entries: Entry[]
+try {
+  entries = JSON.parse(input) as Entry[]
+} catch {
+  console.error('на вход нужен JSON вида [{ "path": "...", "name": "..." }]')
+  process.exit(1)
+}
+if (!Array.isArray(entries) || entries.length === 0) {
+  console.error('список пуст')
   process.exit(1)
 }
 
-for (const path of paths) {
+for (const { path, name } of entries) {
   const file = Bun.file(path)
   if (!(await file.exists())) {
     console.error(`  нет файла: ${path}`)
     process.exit(1)
   }
-  const name = basename(path)
+  // Тип определяем по НАСТОЯЩЕМУ имени, а не по пути: файлы едут в контейнер
+  // под служебными именами вроде seed-0.bin, и Bun.file(path).type дал бы
+  // application/octet-stream. С ним браузер не проигрывает трек, а рендер
+  // ждёт audio/*.
+  const type = Bun.file(name).type || 'application/octet-stream'
   const stored = await media.create(
-    new File([await file.arrayBuffer()], name, { type: file.type || 'application/octet-stream' }),
+    new File([await file.arrayBuffer()], name, { type }),
     SAMPLES_OWNER,
   )
   console.log(`  ${name}: ${stored.id}, ${stored.size} байт, ${stored.type}`)
