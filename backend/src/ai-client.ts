@@ -52,9 +52,29 @@ export type RenderOutcome =
   /** Готовый mp4 потоком — его сразу можно писать в Blob. */
   { status: 'rendered'; body: ReadableStream<Uint8Array> } | AiFailure
 
+/** Рендер принят в работу: дальше его состояние спрашивают опросом. */
+export type StartOutcome = { status: 'accepted'; jobId: string } | AiFailure
+
+export type PollOutcome =
+  /** Ещё считается. */
+  | { status: 'running' }
+  /** Готов: тело забирается один раз, дальше сервис его забывает. */
+  | { status: 'rendered'; body: ReadableStream<Uint8Array> }
+  /** Сервис про такую задачу не знает — он перезапускался, начинаем заново. */
+  | { status: 'unknown' }
+  | AiFailure
+
 export interface AiClient {
   prepare(input: PrepareInput): Promise<PrepareOutcome>
   render(input: RenderInput): Promise<RenderOutcome>
+  /**
+   * Ставит рендер в фон и сразу возвращает управление. `key` — ключ
+   * идемпотентности: повтор с тем же ключом не запускает вторую работу, а
+   * возвращает уже идущую. Благодаря этому обрыв связи ничего не стоит.
+   */
+  startRender(key: string, input: RenderInput): Promise<StartOutcome>
+  /** Состояние фонового рендера; готовый отдаёт сам файл. */
+  pollRender(jobId: string): Promise<PollOutcome>
   ping(): Promise<void>
 }
 
@@ -133,7 +153,7 @@ export class HttpAiClient implements AiClient {
   ) {}
 
   /** Общая отправка: успех отдаёт сам ответ, неудачу — размеченный исход. */
-  private async send(path: string, parts: Part[]): Promise<Response | AiFailure> {
+  private async send(path: string, parts: Part[], key?: string): Promise<Response | AiFailure> {
     const boundary = `----raw2reel${crypto.randomUUID().replace(/-/g, '')}`
     let response: Response
     try {
@@ -142,6 +162,7 @@ export class HttpAiClient implements AiClient {
         headers: {
           authorization: `Bearer ${this.token}`,
           'content-type': `multipart/form-data; boundary=${boundary}`,
+          ...(key ? { 'idempotency-key': key } : {}),
         },
         body: streamOf(multipart(boundary, parts)[Symbol.asyncIterator]()),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -198,9 +219,8 @@ export class HttpAiClient implements AiClient {
     return outcome instanceof Response ? { status: 'prepared', body: outcome.body! } : outcome
   }
 
-  async render(input: RenderInput): Promise<RenderOutcome> {
-    // Набор полей закрыт разбором на стороне сервиса (max_files=2,
-    // max_fields=4), поэтому лишнего здесь быть не должно.
+  /** Набор полей закрыт разбором на стороне сервиса (max_files=2, max_fields=4). */
+  private renderParts(input: RenderInput): Part[] {
     const parts: Part[] = [
       { kind: 'field', name: 'analysis', value: input.analysis },
       { kind: 'field', name: 'person_ids', value: JSON.stringify(input.personIds) },
@@ -209,8 +229,68 @@ export class HttpAiClient implements AiClient {
       { kind: 'file', name: 'video', source: input.video },
     ]
     if (input.music) parts.push({ kind: 'file', name: 'music', source: input.music })
-    const outcome = await this.send('/v2/render', parts)
+    return parts
+  }
+
+  async render(input: RenderInput): Promise<RenderOutcome> {
+    const outcome = await this.send('/v2/render', this.renderParts(input))
     return outcome instanceof Response ? { status: 'rendered', body: outcome.body! } : outcome
+  }
+
+  async startRender(key: string, input: RenderInput): Promise<StartOutcome> {
+    const outcome = await this.send('/v2/render', this.renderParts(input), key)
+    if (!(outcome instanceof Response)) return outcome
+    let body: { job_id?: unknown }
+    try {
+      body = (await outcome.json()) as { job_id?: unknown }
+    } catch (error) {
+      return {
+        status: 'unavailable',
+        detail: `не разобрать ответ на постановку: ${error instanceof Error ? error.message : error}`,
+      }
+    }
+    if (typeof body.job_id !== 'string' || !body.job_id) {
+      return { status: 'unavailable', detail: 'сервис не вернул идентификатор задачи' }
+    }
+    return { status: 'accepted', jobId: body.job_id }
+  }
+
+  async pollRender(jobId: string): Promise<PollOutcome> {
+    let response: Response
+    try {
+      response = await fetch(new URL(`/v2/jobs/${encodeURIComponent(jobId)}`, this.baseUrl), {
+        headers: { authorization: `Bearer ${this.token}` },
+        signal: AbortSignal.timeout(60_000),
+      })
+    } catch (error) {
+      return {
+        status: 'unavailable',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+    // Сервис перезапускался и про задачу не помнит — начинаем заново.
+    if (response.status === 404 || response.status === 410) return { status: 'unknown' }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      return { status: 'unavailable', detail: `HTTP ${response.status} ${detail.slice(0, 300)}` }
+    }
+    // Готовый результат приходит самим файлом, промежуточные состояния — JSON.
+    if (!response.headers.get('content-type')?.includes('application/json')) {
+      return { status: 'rendered', body: response.body! }
+    }
+    const body = (await response.json().catch(() => ({}))) as {
+      status?: unknown
+      error?: { code?: unknown; message?: unknown }
+    }
+    if (body.status === 'running') return { status: 'running' }
+    const code = typeof body.error?.code === 'string' ? body.error.code : ''
+    const message =
+      typeof body.error?.message === 'string' ? body.error.message : 'рендер не удался'
+    // Те же правила, что и в синхронном пути: про медиа и параметры повторять
+    // бессмысленно, остальное — повторяемо.
+    return code === 'media_error' || code === 'invalid_input' || code === 'face_catalog_limit'
+      ? { status: 'rejected', detail: message }
+      : { status: 'unavailable', detail: `${code || 'failed'}: ${message}` }
   }
 
   async ping(): Promise<void> {

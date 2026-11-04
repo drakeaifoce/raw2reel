@@ -8,6 +8,7 @@ from PIL import Image
 from raw2reel_ai.analysis import read_analysis
 from raw2reel_ai.config import Settings
 from raw2reel_ai.main import create_app
+from raw2reel_ai.media import MediaError
 
 
 def prepared_payload():
@@ -119,3 +120,102 @@ def test_v2_rejects_invalid_selection_and_duplicate_fields():
         ).status_code
         == 422
     )
+
+
+def test_async_render_is_idempotent_and_survives_a_dropped_connection():
+    """Повтор с тем же ключом не запускает вторую работу.
+
+    Это и делает обрыв связи безопасным: раньше результат жил только внутри
+    одного HTTP-соединения, и перезапуск клиента стоил уже посчитанного
+    рендера.
+    """
+    renders = []
+
+    class CountingPipeline(FakePipeline):
+        def render(self, source, output, **options):
+            renders.append(options["person_ids"])
+            super().render(source, output, **options)
+
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None, ai_service_token="test"),
+            cloud_pipeline_factory=CountingPipeline,
+        )
+    )
+    headers = {"Authorization": "Bearer test", "Idempotency-Key": "job-42"}
+    payload = {
+        "files": {"video": ("v.mp4", b"video")},
+        "data": {
+            "analysis": json.dumps(prepared_payload()),
+            "person_ids": '["p1"]',
+            "duration": "20",
+            "captions": "false",
+        },
+    }
+
+    accepted = client.post("/v2/render", headers=headers, **payload)
+    assert accepted.status_code == 202
+    assert accepted.json()["job_id"] == "job-42"
+
+    # Повтор: клиент не знает, дошёл ли первый запрос. Вторая работа не
+    # запускается, ответ тот же.
+    again = client.post("/v2/render", headers=headers, **payload)
+    assert again.status_code == 202 and again.json()["job_id"] == "job-42"
+
+    result = client.get("/v2/jobs/job-42", headers={"Authorization": "Bearer test"})
+    assert result.status_code == 200 and result.content == b"mp4"
+    assert len(renders) == 1
+
+    # Результат забирают один раз: дальше сервис про задачу забывает, и
+    # клиент honestly начнёт заново.
+    assert (
+        client.get("/v2/jobs/job-42", headers={"Authorization": "Bearer test"}).status_code == 404
+    )
+
+
+def test_async_render_reports_failure_instead_of_hanging():
+    class FailingPipeline(FakePipeline):
+        def render(self, source, output, **options):
+            raise MediaError("broken source")
+
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None, ai_service_token="test"),
+            cloud_pipeline_factory=FailingPipeline,
+        )
+    )
+    headers = {"Authorization": "Bearer test", "Idempotency-Key": "job-bad"}
+    accepted = client.post(
+        "/v2/render",
+        headers=headers,
+        files={"video": ("v.mp4", b"video")},
+        data={
+            "analysis": json.dumps(prepared_payload()),
+            "person_ids": '["p1"]',
+            "duration": "20",
+        },
+    )
+    assert accepted.status_code == 202
+
+    state = client.get("/v2/jobs/job-bad", headers={"Authorization": "Bearer test"}).json()
+    assert state["status"] == "failed" and state["error"]["code"] == "media_error"
+
+
+def test_sync_render_still_returns_the_file():
+    """Старый путь без ключа не тронут: на нём держится текущий бэкенд."""
+    client = TestClient(
+        create_app(
+            Settings(_env_file=None, ai_service_token="test"), cloud_pipeline_factory=FakePipeline
+        )
+    )
+    response = client.post(
+        "/v2/render",
+        headers={"Authorization": "Bearer test"},
+        files={"video": ("v.mp4", b"video")},
+        data={
+            "analysis": json.dumps(prepared_payload()),
+            "person_ids": '["p1"]',
+            "duration": "20",
+        },
+    )
+    assert response.status_code == 200 and response.content == b"mp4"

@@ -34,4 +34,11 @@ def test_ready_reports_media_dependencies(monkeypatch):
 def test_legacy_render_route_is_removed():
     assert client.post("/v1/render").status_code == 404
     paths = client.get("/openapi.json").json()["paths"]
-    assert set(paths) == {"/health", "/ready", "/version", "/v2/prepare", "/v2/render"}
+    assert set(paths) == {
+        "/health",
+        "/ready",
+        "/version",
+        "/v2/prepare",
+        "/v2/render",
+        "/v2/jobs/{job_id}",
+    }

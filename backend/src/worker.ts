@@ -121,6 +121,37 @@ const prepareAnalysis = async (
   }
 }
 
+/** Как часто спрашивать сервис о готовности. */
+const POLL_INTERVAL_MS = 5_000
+
+/**
+ * Ждёт готовности фонового рендера. Соединение при этом короткое, поэтому
+ * ни наш таймаут, ни чужой на него не влияют: работа живёт у сервиса, а не
+ * внутри запроса.
+ */
+const awaitRender = async (
+  job: RenderJob,
+  aiJobId: string,
+): Promise<Step<ReadableStream<Uint8Array>>> => {
+  for (;;) {
+    const state = await ai!.pollRender(aiJobId)
+    if (state.status === 'rendered') return { value: state.body }
+    if (state.status === 'rejected') {
+      return { outcome: await abort(job, state.detail || 'AI-сервис отверг медиа или параметры') }
+    }
+    if (state.status === 'unknown') {
+      // Сервис перезапускался и задачу не помнит. Возвращаем в очередь:
+      // следующая попытка поставит её заново.
+      return { outcome: await postpone(job, 'AI-сервис забыл задачу, ставлю заново') }
+    }
+    if (state.status === 'busy' || state.status === 'unavailable') {
+      const reason = state.status === 'busy' ? 'AI-сервис занят другой работой' : state.detail
+      return { outcome: await postpone(job, reason) }
+    }
+    await Bun.sleep(POLL_INTERVAL_MS)
+  }
+}
+
 const runPrepare = async (job: RenderJob): Promise<QueueOutcome> => {
   if (!job.analysisId) return abort(job, 'задача разбора без идентификатора разбора')
   const analysisId = job.analysisId
@@ -191,7 +222,11 @@ const runRender = async (job: RenderJob): Promise<QueueOutcome> => {
   console.log(
     `задача ${job.id}: рендер начат, попытка ${job.attempts}, персонажей ${chosen.length}`,
   )
-  const outcome = await ai!.render({
+  // Идентификатор нашей задачи служит ключом идемпотентности: повтор с ним
+  // не запускает у сервиса вторую работу, а возвращает уже идущую. Поэтому
+  // обрыв связи, перезапуск воркера и выкладка больше не стоят посчитанного
+  // рендера — мы просто переспрашиваем ту же задачу.
+  const started = await ai!.startRender(job.id, {
     video: { name: source.metadata.name, type: source.metadata.type, body: source.body },
     analysis,
     personIds: chosen,
@@ -204,17 +239,20 @@ const runRender = async (job: RenderJob): Promise<QueueOutcome> => {
     captions: job.captions ?? true,
   })
 
-  if (outcome.status === 'busy' || outcome.status === 'unavailable') {
-    const reason = outcome.status === 'busy' ? 'AI-сервис занят другой работой' : outcome.detail
+  if (started.status === 'busy' || started.status === 'unavailable') {
+    const reason = started.status === 'busy' ? 'AI-сервис занят другой работой' : started.detail
     return postpone(job, reason)
   }
-  if (outcome.status === 'rejected') {
-    return abort(job, outcome.detail || 'AI-сервис отверг медиа или параметры')
+  if (started.status === 'rejected') {
+    return abort(job, started.detail || 'AI-сервис отверг медиа или параметры')
   }
+
+  const outcome = await awaitRender(job, started.jobId)
+  if ('outcome' in outcome) return outcome.outcome
 
   // Результат буферизуем осознанно: это готовый рилс до 30 секунд, единицы
   // мегабайт.
-  const blob = await new Response(outcome.body).blob()
+  const blob = await new Response(outcome.value).blob()
   const file = new File([blob], `reel-${job.id}.mp4`, { type: 'video/mp4' })
   const stored = await media!.create(file, job.ownerId)
   await jobs!.finish(job.id, stored.id)
