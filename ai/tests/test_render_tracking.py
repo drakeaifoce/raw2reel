@@ -27,7 +27,7 @@ class Cloud:
     def structured(self, schema, *_, **__):
         assert schema is ShotGrounding
         self.ground_calls += 1
-        return ShotGrounding(faces=[dict(frame=0, person_id="p1", bbox=[0.65, 0.2, 0.75, 0.4])])
+        return ShotGrounding(faces=[dict(frame=0, person_id="p1", bbox=[650, 200, 750, 400])])
 
     def sam(self, *_):
         self.sam_calls += 1
@@ -74,3 +74,71 @@ def test_already_tracked_scene_is_not_reprocessed(tmp_path):
         used_seconds=2,
     )
     assert cloud.ground_calls == 0 and result.tracks == points
+
+
+def test_optional_grounding_schema_error_keeps_full_frame_instead_of_aborting(tmp_path):
+    from raw2reel_ai.meta import MetaError
+
+    class Invalid(Cloud):
+        def structured(self, *_, **__):
+            raise MetaError("model_response", "Cloud model returned invalid structured data.")
+
+    result = refine_tracks(
+        Path("video.mp4"),
+        [Segment(start=10, end=12, reason="setup", subject_ids=["p1"])],
+        [Interval(start=10, end=12)],
+        {"p1": b"reference"},
+        [],
+        settings=Settings(_env_file=None),
+        cloud=Invalid(),
+        media=Media(),
+        tools=Tools(),
+        work=tmp_path,
+        used_seconds=0,
+    )
+    assert result.tracks == [] and result.warnings
+
+
+def test_actual_spark_thousand_grid_response_is_converted_for_crop(tmp_path):
+    class ThousandGrid(Cloud):
+        def structured(self, *_, **__):
+            return ShotGrounding(faces=[dict(frame=0, person_id="p1", bbox=[630, 275, 755, 445])])
+
+    result = refine_tracks(
+        Path("video.mp4"),
+        [Segment(start=10, end=12, reason="setup", subject_ids=["p1"])],
+        [Interval(start=10, end=12)],
+        {"p1": b"reference"},
+        [],
+        settings=Settings(_env_file=None),
+        cloud=ThousandGrid(),
+        media=Media(),
+        tools=Tools(),
+        work=tmp_path,
+        used_seconds=120,
+    )
+    assert result.tracks[0].bbox == [0.63, 0.275, 0.755, 0.445]
+
+
+def test_optional_sam_failure_retains_reference_grounded_anchors(tmp_path):
+    from raw2reel_ai.meta import MetaError
+
+    class FailedSam(Cloud):
+        def sam(self, *_):
+            raise MetaError("model_response", "Invalid SAM segmentation output.")
+
+    result = refine_tracks(
+        Path("video.mp4"),
+        [Segment(start=10, end=12, reason="setup", subject_ids=["p1"])],
+        [Interval(start=10, end=12)],
+        {"p1": b"reference"},
+        [],
+        settings=Settings(_env_file=None),
+        cloud=FailedSam(),
+        media=Media(),
+        tools=Tools(),
+        work=tmp_path,
+        used_seconds=0,
+    )
+    assert result.tracks and result.tracks[0].bbox == [0.65, 0.2, 0.75, 0.4]
+    assert result.warnings

@@ -4,16 +4,31 @@ import json
 from dataclasses import dataclass
 
 import structlog
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from .cloud_models import Box, TrackPoint
+from .cloud_models import TrackPoint
 from .meta import MetaError
 from .models import StrictModel
 
 log = structlog.get_logger(__name__)
 
 
-class GroundedFace(Box):
+class GroundedFace(StrictModel):
+    bbox: list[int] = Field(
+        min_length=4, max_length=4, description="xyxy coordinates on a 0..1000 grid"
+    )
+
+    @model_validator(mode="after")
+    def valid_box(self):
+        x1, y1, x2, y2 = self.bbox
+        if not (0 <= x1 < x2 <= 1000 and 0 <= y1 < y2 <= 1000):
+            raise ValueError("Invalid 0..1000 xyxy box")
+        return self
+
+    @property
+    def normalized(self):
+        return [v / 1000 for v in self.bbox]
+
     frame: int = Field(ge=0, le=2)
     person_id: str = Field(pattern=r"^p[0-9]+$")
 
@@ -84,24 +99,36 @@ def refine_tracks(
             media.frame(source, t, work / f"ground-{scene_index}-{i}.jpg")
             for i, t in enumerate(times)
         ]
-        grounded = cloud.structured(
-            ShotGrounding,
-            "Locate ONLY the selected anonymous people in these video frames "
-            "using the face references. "
-            "Reference images come first in reference_ids order; "
-            "then video frames in frame_times order. "
-            "Return normalized xyxy FACE boxes in full frame coordinates and frame index 0..2. "
-            "Match stable facial structure across pose/lighting. "
-            "Never assign a different visible person "
-            "to a reference just because they are prominent. "
-            "If no selected person is visible, return []. "
-            "No names or demographic labels. Data: "
-            + json.dumps(dict(reference_ids=ids, frame_times=times)),
-            images=[references[pid] for pid in ids] + frames,
-            stage="render_grounding",
-        )
-        if any(f.person_id not in ids or f.frame >= len(times) for f in grounded.faces):
-            raise MetaError("model_response", "Invalid selected-shot grounding reference.")
+        try:
+            grounded = cloud.structured(
+                ShotGrounding,
+                "Locate ONLY the selected anonymous people in these video frames "
+                "using the face references. "
+                "Reference images come first in reference_ids order; "
+                "then video frames in frame_times order. "
+                "Return FACE bbox as [x1,y1,x2,y2] on the 0..1000 grid, NOT pixels or 0..1. "
+                "Example bbox [650,200,750,400]. Frame index counts only video frames: 0..2. "
+                "Match stable facial structure across pose/lighting. "
+                "Never assign a different visible person "
+                "to a reference just because they are prominent. "
+                'If no selected person is visible, return {"faces":[]}. '
+                "No names or demographic labels. Data: "
+                + json.dumps(dict(reference_ids=ids, frame_times=times)),
+                images=[references[pid] for pid in ids] + frames,
+                stage="render_grounding",
+            )
+            if any(f.person_id not in ids or f.frame >= len(times) for f in grounded.faces):
+                raise MetaError("model_response", "Invalid selected-shot grounding reference.")
+        except MetaError as error:
+            if error.code not in {"model_response", "model_token_limit", "model_refusal"}:
+                raise
+            log.warning(
+                "selected_scene_grounding_failed", scene_index=scene_index, error_code=error.code
+            )
+            warnings.append(
+                f"Framing refinement failed in scene {scene_index}; full frame retained."
+            )
+            continue
         if not grounded.faces:
             warnings.append(
                 f"No reliable selected-person grounding in scene {scene_index}; "
@@ -109,7 +136,9 @@ def refine_tracks(
             )
             continue
         anchors = [
-            TrackPoint(time=times[f.frame], person_id=f.person_id, scene=scene_index, bbox=f.bbox)
+            TrackPoint(
+                time=times[f.frame], person_id=f.person_id, scene=scene_index, bbox=f.normalized
+            )
             for f in grounded.faces
         ]
         dense = []
@@ -125,33 +154,41 @@ def refine_tracks(
                         max(0, round((times[face.frame] - scene.start) * fps)),
                         max(0, int(info["duration"] * fps) - 1),
                     )
-                    x1, y1, x2, y2 = face.bbox
+                    x1, y1, x2, y2 = face.normalized
                     w, h = info["width"], info["height"]
                     prompts.append(
                         f"<{frame}f>{ids.index(face.person_id) + 1}<|box;x1={int(x1 * w)};"
                         f"y1={int(y1 * h)};x2={min(w - 1, int(x2 * w) - 1)};"
                         f"y2={min(h - 1, int(y2 * h) - 1)};w={w};h={h}|>"
                     )
-                boxes = cloud.sam(clip, "".join(prompts))
-                used_seconds += info["duration"]
-                for box in boxes:
-                    if (
-                        not 1 <= box.object_id <= len(ids)
-                        or box.frame >= int(info["duration"] * fps) + 1
-                    ):
-                        raise MetaError(
-                            "model_response", "Invalid selected-shot SAM object or frame."
-                        )
-                    time = scene.start + box.frame / fps
-                    if time < scene.end:
-                        dense.append(
-                            TrackPoint(
-                                time=time,
-                                person_id=ids[box.object_id - 1],
-                                scene=scene_index,
-                                bbox=box.bbox,
+                try:
+                    boxes = cloud.sam(clip, "".join(prompts))
+                    used_seconds += info["duration"]
+                    for box in boxes:
+                        if (
+                            not 1 <= box.object_id <= len(ids)
+                            or box.frame >= int(info["duration"] * fps) + 1
+                        ):
+                            raise MetaError(
+                                "model_response", "Invalid selected-shot SAM object or frame."
                             )
-                        )
+                        time = scene.start + box.frame / fps
+                        if time < scene.end:
+                            dense.append(
+                                TrackPoint(
+                                    time=time,
+                                    person_id=ids[box.object_id - 1],
+                                    scene=scene_index,
+                                    bbox=box.bbox,
+                                )
+                            )
+                except MetaError as error:
+                    if error.code in {"model_auth", "model_unconfigured"}:
+                        raise
+                    dense = []
+                    log.warning(
+                        "selected_scene_sam_failed", scene_index=scene_index, error_code=error.code
+                    )
         if not dense:
             warnings.append(
                 f"Scene {scene_index} uses reference-grounded anchors without dense tracking."

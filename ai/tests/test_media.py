@@ -507,3 +507,72 @@ def test_dialogue_audio_keeps_cut_order_and_exact_duration(tmp_path, tools):
 
     assert amplitude(880, 0.3) > amplitude(440, 0.3) * 10
     assert amplitude(440, 1.3) > amplitude(880, 1.3) * 10
+
+
+def test_portrait_keeps_off_center_subject_after_letterbox_crop_and_lost_detection(tmp_path, tools):
+    from PIL import Image
+
+    from raw2reel_ai.cloud_models import TrackPoint
+    from raw2reel_ai.models import Segment
+    from raw2reel_ai.reframing import portrait_filter
+
+    source = tmp_path / "off-center.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:size=640x360:rate=30:duration=2,drawbox=x=0:y=46:w=640:h=268:c=gray:t=fill,"
+        "drawbox=x=420:y=70:w=40:h=60:c=red:t=fill",
+        "-an",
+        "-c:v",
+        "libx264",
+        str(source),
+    )
+    segment = Segment(start=0, end=2, reason="subject", subject_ids=["p1"])
+    points = [
+        TrackPoint(
+            time=0.1, person_id="p1", scene=0, bbox=[420 / 640, 70 / 360, 460 / 640, 130 / 360]
+        )
+    ]
+    crop = portrait_filter(
+        segment, points, ["p1"], aspect_ratio=640 / 360, content_bounds=(0, 46 / 360, 1, 314 / 360)
+    )
+    rendered, _ = tools.render(
+        source,
+        [segment],
+        tmp_path,
+        "",
+        False,
+        None,
+        impact_start=1.5,
+        portrait_filters=[crop],
+        epic=True,
+    )
+    for index, time in enumerate((0.05, 1.3, 1.8)):
+        frame = tmp_path / f"person-{index}.png"
+        tools.ffmpeg("-ss", str(time), "-i", str(rendered), "-frames:v", "1", str(frame))
+        with Image.open(frame) as image:
+            mask = image.convert("RGB").point(lambda v: v)
+            rows = [
+                [
+                    x
+                    for x in range(720)
+                    if (lambda rgb: rgb[0] > 150 and rgb[1] < 100 and rgb[2] < 100)(
+                        mask.getpixel((x, y))
+                    )
+                ]
+                for y in range(0, 500, 5)
+            ]
+            xs = [x for row in rows for x in row]
+            assert xs and 330 < sum(xs) / len(xs) < 390
+
+
+def test_review_clip_can_preserve_audio_while_sam_clip_stays_silent(tmp_path, tools, video):
+    from raw2reel_ai.cloud_media import CloudMedia
+    from raw2reel_ai.cloud_models import Interval
+
+    media = CloudMedia(tools)
+    for enabled in (True, False):
+        path = tmp_path / f"review-{enabled}.mp4"
+        media.clip(video, Interval(start=0.2, end=1.2), path, include_audio=enabled)
+        assert tools.probe(path)["has_audio"] == enabled

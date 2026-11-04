@@ -209,13 +209,49 @@ class CloudModels:
                 max_output_tokens=12000,
                 **(
                     {"reasoning": {"effort": "low"}}
-                    if stage in {"face_grouping", "face_grounding"}
+                    if stage
+                    in {
+                        "face_grouping",
+                        "face_grounding",
+                        "render_grounding",
+                        "preselection",
+                        "video_plan",
+                    }
                     else {}
                 ),
             )
             try:
                 return schema.model_validate_json(text)
-            except (ValidationError, ValueError):
+            except ValidationError as error:
+                spec = schema.model_json_schema()
+                allowed = set(spec.get("properties", {}))
+                for definition in spec.get("$defs", {}).values():
+                    allowed.update(definition.get("properties", {}))
+                issues = []
+                for issue in error.errors(
+                    include_input=False, include_context=False, include_url=False
+                )[:5]:
+                    path = (
+                        ".".join(
+                            str(p) if isinstance(p, int) or p in allowed else "<field>"
+                            for p in issue["loc"]
+                        )
+                        or "root"
+                    )
+                    issues.append({"field": path, "type": issue["type"]})
+                structlog.get_logger(__name__).warning(
+                    "model_schema_invalid",
+                    schema_name=schema.__name__,
+                    model_stage=stage,
+                    issues=issues,
+                )
+                detail = ", ".join(f"{i['field']}: {i['type']}" for i in issues)
+                raise MetaError(
+                    "model_response",
+                    f"Cloud model returned invalid structured data "
+                    f"for {schema.__name__} ({detail}).",
+                ) from None
+            except ValueError:
                 raise MetaError(
                     "model_response", "Cloud model returned invalid structured data."
                 ) from None
