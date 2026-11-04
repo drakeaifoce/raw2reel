@@ -41,6 +41,10 @@ class FakeCloud:
             )
         if schema is Selection:
             return Selection(candidate_ids=["c1", "c0"])
+        from raw2reel_ai.render_tracking import ShotGrounding
+
+        if schema is ShotGrounding:
+            return ShotGrounding(faces=[dict(frame=0, person_id="p1", bbox=[200, 200, 400, 500])])
         if schema is EditPlan:
             return EditPlan(
                 narrative="Reordered hook, then impact.",

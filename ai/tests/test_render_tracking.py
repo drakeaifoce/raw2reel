@@ -54,7 +54,7 @@ def test_selected_untracked_scene_gets_reference_grounding_and_sam(tmp_path):
     assert result.used_seconds == 2
 
 
-def test_already_tracked_scene_is_not_reprocessed(tmp_path):
+def test_correct_dense_track_is_verified_without_repeating_sam(tmp_path):
     cloud = Cloud()
     points = [
         TrackPoint(time=10 + i * 0.2, person_id="p1", scene=0, bbox=[0.65, 0.2, 0.75, 0.4])
@@ -73,7 +73,8 @@ def test_already_tracked_scene_is_not_reprocessed(tmp_path):
         work=tmp_path,
         used_seconds=2,
     )
-    assert cloud.ground_calls == 0 and result.tracks == points
+    assert cloud.ground_calls == 1 and cloud.sam_calls == 0
+    assert all(p in result.tracks for p in points)
 
 
 def test_optional_grounding_schema_error_keeps_full_frame_instead_of_aborting(tmp_path):
@@ -142,3 +143,26 @@ def test_optional_sam_failure_retains_reference_grounded_anchors(tmp_path):
     )
     assert result.tracks and result.tracks[0].bbox == [0.65, 0.2, 0.75, 0.4]
     assert result.warnings
+
+
+def test_dense_track_of_background_subject_is_not_trusted_without_reference_check(tmp_path):
+    cloud = Cloud()
+    wrong = [
+        TrackPoint(time=10 + i * 0.2, person_id="p1", scene=0, bbox=[0.1, 0.2, 0.2, 0.4])
+        for i in range(10)
+    ]
+    result = refine_tracks(
+        Path("video.mp4"),
+        [Segment(start=10, end=12, reason="setup", subject_ids=["p1"])],
+        [Interval(start=10, end=12)],
+        {"p1": b"reference"},
+        wrong,
+        settings=Settings(_env_file=None),
+        cloud=cloud,
+        media=Media(),
+        tools=Tools(),
+        work=tmp_path,
+        used_seconds=2,
+    )
+    assert cloud.ground_calls == 1 and cloud.sam_calls == 1
+    assert all(p.bbox[0] > 0.5 for p in result.tracks)

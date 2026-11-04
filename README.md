@@ -42,16 +42,21 @@ Each app is self-contained: its own dependencies, scripts, linters and README.
    It chooses a complete spoken setup, then reaction/action highlights. Setup length
    follows the end of the thought, not a fixed 6–8 second timer: normally one or two
    shots, up to 14 seconds, leaving at least six seconds for impact.
-5. Code assembles 600 frames at 30 FPS. The impact section uses fast 0.4–0.9 second
+5. The setup is checked against complete source utterances in reviewed footage,
+   with short context guards; it is extended to the spoken boundary when possible.
+   Unreviewed gaps are never filled. Code assembles 600 frames at 30 FPS. The impact section uses fast 0.4–0.9 second
    shots, reusing approved footage when needed. Original audio and captions stop at
    the transition; soundtrack gain rises to 0.5 after normalization. Zoom gestures
    and mild color/sharpness correction are applied locally.
-6. Selected scenes lacking a usable track get reference-based grounding and further
+6. Every selected scene is checked against the chosen face reference. Dense tracks
+   are reused only when they agree; missing or background-object tracks get further
    SAM tracking within the tracking budget. Stable letterbox bars are removed before
    portrait cropping and coordinates are transformed accordingly. If identity cannot
    be located reliably, the complete frame is retained instead of cropping a person away.
 7. Captions are transcribed again from the **exact final setup audio**, in output order,
-   with speech endpoint detection and low-energy padding trimmed. Word highlighting
+   with speech endpoint detection, an ASR-only silence tail to flush short utterances,
+   a DIARIZATION fallback and low-energy padding trimmed. If recognition confirms the
+   full expected phrase, the transition follows its actual speech end plus a short pause. Word highlighting
    is still approximate: Muse Voice supplies turn timestamps, not word timestamps.
 8. AI returns H.264/AAC MP4 at 720×1280. The backend stores it and updates the job;
    the frontend polls status and exposes playback/download.

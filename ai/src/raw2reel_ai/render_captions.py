@@ -41,7 +41,25 @@ def setup_captions(meta, tools, source, segments, impact, work):
     if not has_signal(audio):
         return "", []
     # Endpointing finds utterance boundaries; speaker attribution is not needed here.
-    turns = align_speech_edges(meta.transcribe(audio, mode="ENDPOINTING"), audio)
+    # Flush the final utterance on very short recordings; never add this padding
+    # to the rendered audio or subtitle timeline.
+    padded = work / "dialogue-asr.wav"
+    with wave.open(str(audio), "rb") as original:
+        parameters = original.getparams()
+        data = original.readframes(original.getnframes())
+    with wave.open(str(padded), "wb") as output:
+        output.setparams(parameters)
+        output.writeframes(
+            data
+            + b"\0"
+            * round(0.8 * parameters.framerate)
+            * parameters.sampwidth
+            * parameters.nchannels
+        )
+    raw = meta.transcribe(padded, mode="ENDPOINTING")
+    if not any(t["endMs"] > t["startMs"] and t.get("transcript", "").strip() for t in raw):
+        raw = meta.transcribe(padded, mode="DIARIZATION")
+    turns = align_speech_edges(raw, audio)
     text = make_ass(
         turns, [Segment(start=0, end=impact, reason="final dialogue", subject_ids=[])], until=impact
     )

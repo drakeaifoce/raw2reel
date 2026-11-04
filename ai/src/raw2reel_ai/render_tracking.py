@@ -73,12 +73,7 @@ def refine_tracks(
     result = list(tracks)
     warnings = []
     for scene_index, scene in enumerate(scenes):
-        selected = [
-            s
-            for s in segments
-            if scene.start - 1e-5 <= s.start < scene.end
-            and not has_track(s, [p for p in result if p.scene == scene_index])
-        ]
+        selected = [s for s in segments if scene.start - 1e-5 <= s.start < scene.end]
         if not selected:
             continue
         times = sorted(
@@ -95,6 +90,9 @@ def refine_tracks(
         )
         if not ids:
             continue
+        previous = [p for p in result if p.scene == scene_index and p.person_id in ids]
+        # Until verified, stale/group-mislabeled seed boxes must not crop this scene.
+        result = [p for p in result if p.scene != scene_index or p.person_id not in ids]
         frames = [
             media.frame(source, t, work / f"ground-{scene_index}-{i}.jpg")
             for i, t in enumerate(times)
@@ -141,6 +139,20 @@ def refine_tracks(
             )
             for f in grounded.faces
         ]
+        verified = True
+        for anchor in anchors:
+            nearby = [
+                p
+                for p in previous
+                if p.person_id == anchor.person_id and abs(p.time - anchor.time) <= 0.4
+            ]
+            if not nearby or max(_iou(anchor.bbox, p.bbox) for p in nearby) < 0.3:
+                verified = False
+                break
+        if verified and all(has_track(s, previous) for s in selected):
+            result.extend(previous + anchors)
+            log.info("selected_scene_verified", scene_index=scene_index, anchors=len(anchors))
+            continue
         dense = []
         if used_seconds + scene.end - scene.start <= settings.cloud_track_seconds:
             clip = work / f"selected-tracking-{scene_index}.mp4"
@@ -215,3 +227,9 @@ def shot_tracks(segment, tracks, scenes):
         and p.person_id in segment.subject_ids
         and segment.start - 0.6 <= p.time < segment.end
     ]
+
+
+def _iou(a, b):
+    area = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - area
+    return area / union if union > 0 else 0

@@ -25,6 +25,7 @@ from .cloud_models import (
     TranscriptTurn,
 )
 from .config import Settings
+from .dialogue_setup import complete_dialogue, finish_at_speech_end
 from .edit_structure import EDIT_SECONDS, build_edit
 from .face_filters import FaceFilters
 from .media import MediaTools
@@ -456,6 +457,7 @@ class CloudPipeline:
                 "SETUP: one or at most two shots containing a COMPLETE spoken thought. "
                 "LISTEN to the supplied audio, do not infer word boundaries from evenly-spaced "
                 "transcript text. Prefer 3-10 seconds; allow up to 14 to finish naturally. "
+                "Use only dialogue present in the transcript; never invent a spoken line. "
                 "Quote the complete spoken setup in narrative. End after its final word with a "
                 "brief natural pause. Never stop mid-clause at a duration or camera cut. "
                 "If a phrase cannot finish within two shots/14 seconds, choose a different phrase. "
@@ -503,11 +505,36 @@ class CloudPipeline:
                         "model_response", "Edit uses unreviewed footage or unknown people."
                     )
             progress("constructing_edit")
+            dialogue = complete_dialogue(plan, turns, reviewed) if catalog.turns else None
+            if dialogue:
+                warnings.extend(dialogue.warnings)
             edit = build_edit(
-                plan, bpm=bpm, impact_beats=[b - drop.seconds for b in beats if b >= drop.seconds]
+                plan,
+                bpm=bpm,
+                impact_beats=[b - drop.seconds for b in beats if b >= drop.seconds],
+                setup_override=dialogue.clips if dialogue else None,
             )
+
             segments, impact = edit.segments, edit.impact_start
             warnings.extend(edit.warnings)
+            subtitle_text = ""
+            caption_turns = []
+            if captions and info["has_audio"]:
+                progress("captioning_dialogue")
+                subtitle_text, caption_turns = setup_captions(
+                    self.meta, self.tools, source, segments, impact, work
+                )
+            if dialogue and dialogue.clips and caption_turns:
+                finished = finish_at_speech_end(dialogue.clips, dialogue.quote, caption_turns)
+                if finished != dialogue.clips:
+                    edit = build_edit(
+                        plan,
+                        bpm=bpm,
+                        impact_beats=[b - drop.seconds for b in beats if b >= drop.seconds],
+                        setup_override=finished,
+                    )
+                    segments, impact = edit.segments, edit.impact_start
+                    log.info("dialogue_end_aligned", setup_seconds=impact)
             timing = align_music(drop.seconds, impact)
             log.info(
                 "edit_constructed",
@@ -547,13 +574,6 @@ class CloudPipeline:
             content_bounds = detect_content_bounds(samples)
             if samples:
                 aspect_ratio = samples[0].width / samples[0].height
-            subtitle_text = ""
-            caption_turns = []
-            if captions and info["has_audio"]:
-                progress("captioning_dialogue")
-                subtitle_text, caption_turns = setup_captions(
-                    self.meta, self.tools, source, segments, impact, work
-                )
             filters = []
             for segment in segments:
                 points = shot_tracks(segment, tracks, catalog.scenes)
@@ -602,7 +622,13 @@ class CloudPipeline:
             manifest = {
                 "version": 2,
                 "source_sha256": catalog.source_sha256,
-                "narrative": plan.narrative,
+                "narrative": (
+                    "Complete setup: " + dialogue.quote + " Then a rapid music-led impact montage."
+                )
+                if dialogue and dialogue.quote
+                else plan.narrative,
+                "model_narrative": plan.narrative,
+                "setup_quote": dialogue.quote if dialogue else "",
                 "clips": timeline,
                 "impact_start": impact,
                 "music_start": timing.offset,
@@ -612,7 +638,7 @@ class CloudPipeline:
                 "requested_duration": requested_duration,
                 "edit_style": "two_part_epic_20s",
                 "content_bounds": list(content_bounds),
-                "caption_timing": "final_dialogue_endpointing" if caption_turns else "none",
+                "caption_timing": "final_dialogue_asr" if caption_turns else "none",
                 "caption_turns": caption_turns,
                 "duration": result["duration"],
                 "bpm": bpm,

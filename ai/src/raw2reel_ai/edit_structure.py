@@ -26,7 +26,9 @@ def _segment(clip, start, frames):
     )
 
 
-def build_edit(plan: EditPlan, *, bpm: float | None = None, impact_beats=()) -> StructuredEdit:
+def build_edit(
+    plan: EditPlan, *, bpm: float | None = None, impact_beats=(), setup_override=None
+) -> StructuredEdit:
     """Keep <=2 setup shots; fill impact with bounded, intentionally reusable footage.
 
     The caller validates every plan clip against reviewed footage BEFORE calling this.
@@ -43,6 +45,11 @@ def build_edit(plan: EditPlan, *, bpm: float | None = None, impact_beats=()) -> 
         if after >= 1 / FPS:
             reservoir.append((clip, clip.start + before, math.floor(after * FPS + 1e-6)))
         position += length
+    if setup_override:
+        setup = [
+            (clip, clip.start, math.floor((clip.end - clip.start) * FPS + 1e-6))
+            for clip in setup_override
+        ]
     warnings = []
     if not setup:
         clip = plan.clips[0]
