@@ -113,7 +113,11 @@ def test_cli_debug_preserves_safe_stack(monkeypatch, capsys, tmp_path):
     ]
     assert cli.main(args) == 1
     output = capsys.readouterr().err
-    event = json.loads(output.splitlines()[-1])
+    event = next(
+        json.loads(line)
+        for line in output.splitlines()
+        if line.startswith("{") and "command_failed" in line
+    )
     assert event["error_type"] == "ValueError"
     assert event["traceback"][-1]["function"] == "prepare"
     assert "grouping diagnostic marker" not in output

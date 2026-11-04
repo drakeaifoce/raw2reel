@@ -12,11 +12,10 @@ LOCAL_TOOLS_DIR = Path(__file__).resolve().parents[2] / ".tools"
 
 
 def tool_path(name: str) -> str:
-    installed = which(name)
-    if installed:
-        return installed
     local = LOCAL_TOOLS_DIR / name
-    return str(local) if local.is_file() else name
+    if local.is_file():
+        return str(local)
+    return which(name) or name
 
 
 class Settings(BaseSettings):

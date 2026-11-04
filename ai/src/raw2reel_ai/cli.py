@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import sys
+import traceback
 import uuid
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import structlog
 from .cloud_pipeline import CloudPipeline
 from .config import Settings
 from .media import MediaError
+from .meta import MetaError
 from .observability import configure_logging, exception_fields
 
 
@@ -26,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Include stack frame locations without exception values",
+        help="Show a readable traceback and external FFmpeg diagnostics (may include media paths)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser(
@@ -86,4 +89,25 @@ def _execute(args):
         if not args.debug and fields["error_code"] != "internal_error":
             fields.pop("traceback", None)
         structlog.get_logger(__name__).error("command_failed", **fields)
+        if args.debug:
+            _debug_exception(error, fields)
+
     return 1
+
+
+def _debug_exception(error: Exception, fields: dict):
+    """Readable traceback without copying validation payloads into the terminal."""
+    frames = traceback.StackSummary.from_list(
+        [
+            traceback.FrameSummary(f["file"], f["line"], f["function"], line="")
+            for f in fields.get("traceback", [])
+        ]
+    )
+    message = str(error) if isinstance(error, (MediaError, MetaError)) else fields["error_code"]
+    sys.stderr.write(
+        "Traceback (most recent call last):\n"
+        + "".join(frames.format())
+        + f"{type(error).__name__}: {message}\n"
+    )
+    if isinstance(error, MediaError) and error.stderr_tail:
+        sys.stderr.write("FFmpeg/ffprobe stderr (last 16 KiB):\n" + error.stderr_tail + "\n")

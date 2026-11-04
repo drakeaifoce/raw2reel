@@ -26,7 +26,7 @@ def test_pipeline_finds_local_tools_without_exports(tmp_path, monkeypatch):
     assert tools.run([settings.ffprobe_path, "-version"]) == b"local ffprobe"
 
 
-def test_system_tool_has_priority_over_local_copy(tmp_path, monkeypatch):
+def test_local_tool_has_priority_over_system_copy(tmp_path, monkeypatch):
     monkeypatch.delenv("FFPROBE_PATH", raising=False)
     local = tmp_path / ".tools"
     system = tmp_path / "system"
@@ -35,7 +35,7 @@ def test_system_tool_has_priority_over_local_copy(tmp_path, monkeypatch):
     executable(system, "ffprobe", "system ffprobe")
     monkeypatch.setenv("PATH", str(system))
     settings = config.Settings(_env_file=None)
-    assert MediaTools(settings).run([settings.ffprobe_path, "-version"]) == b"system ffprobe"
+    assert MediaTools(settings).run([settings.ffprobe_path, "-version"]) == b"local ffprobe"
 
 
 def test_missing_probe_explains_which_setting_to_fix(tmp_path):

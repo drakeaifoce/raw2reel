@@ -242,6 +242,7 @@ class CloudPipeline:
             raise ValueError("Choose 1..16 people and an MP4 output")
         if not 0 < duration <= 30:
             raise ValueError("Duration must be in (0,30]")
+        self.tools.validate_render_tools(captions=captions)
         requested_duration = duration
         duration = EDIT_SECONDS
         log.info(

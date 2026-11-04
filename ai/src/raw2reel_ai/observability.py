@@ -46,7 +46,7 @@ def exception_fields(error: BaseException) -> dict:
             if isinstance(error, (ValueError, OSError, KeyError))
             else "internal_error"
         )
-    return {
+    fields = {
         "error_type": type(error).__name__,
         "error_code": code,
         "traceback": [
@@ -54,6 +54,10 @@ def exception_fields(error: BaseException) -> dict:
             for f in traceback.extract_tb(error.__traceback__)[-24:]
         ],
     }
+    message = getattr(error, "safe_message", None)
+    if isinstance(message, str):
+        fields["error_message"] = message
+    return fields
 
 
 def _safe_exception(logger, method, event):

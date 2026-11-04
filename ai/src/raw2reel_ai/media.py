@@ -4,6 +4,7 @@ import array
 import json
 import math
 import subprocess
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -18,7 +19,14 @@ from .reframing import portrait_filter
 
 
 class MediaError(Exception):
-    pass
+    code = "media_error"
+
+    def __init__(self, message: str, *, stderr_tail: str = ""):
+        super().__init__(message)
+        # External diagnostic is for explicitly requested local CLI debug only.
+        # Never include it in str(error), HTTP responses or structured logs.
+        self.stderr_tail = stderr_tail
+        self.safe_message = message
 
 
 class MediaTools:
@@ -48,14 +56,18 @@ class MediaTools:
             )
 
         try:
-            result = subprocess.run(
-                arguments,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                cwd=cwd,
-                timeout=timeout or self.settings.media_timeout_seconds,
-                check=False,
-            )
+            with tempfile.TemporaryFile() as diagnostics:
+                result = subprocess.run(
+                    arguments,
+                    stdout=subprocess.PIPE,
+                    stderr=diagnostics,
+                    cwd=cwd,
+                    timeout=timeout or self.settings.media_timeout_seconds,
+                    check=False,
+                )
+                diagnostics.seek(0, 2)
+                diagnostics.seek(max(0, diagnostics.tell() - 16384))
+                stderr_tail = diagnostics.read().decode("utf-8", errors="replace")
         except FileNotFoundError:
             failed("executable_missing")
             variable = (
@@ -71,7 +83,7 @@ class MediaTools:
         if result.returncode:
             failed("nonzero_exit", exit_code=result.returncode)
             # Stderr can contain private paths and input metadata; never pass it to clients.
-            raise MediaError("Could not decode or render this media file.")
+            raise MediaError("Could not decode or render this media file.", stderr_tail=stderr_tail)
         log.debug(
             "media_command_completed",
             tool=tool,
@@ -79,6 +91,22 @@ class MediaTools:
             duration_ms=round((time.monotonic() - started) * 1000, 2),
         )
         return result.stdout
+
+    def validate_render_tools(self, *, captions: bool):
+        """Reject unsupported FFmpeg builds before cloud analysis is paid for."""
+        inventory = self.ffmpeg("-filters").decode("utf-8", errors="replace")
+        filters = {parts[1] for line in inventory.splitlines() if len(parts := line.split()) >= 3}
+        required = {"zoompan", "eq", "unsharp", "loudnorm", "aeval"}
+        if captions:
+            required.add("ass")
+        missing = sorted(required - filters)
+        if missing:
+            names = ", ".join(missing)
+            libass = " (libass subtitle support)" if "ass" in missing else ""
+            raise MediaError(
+                f"FFmpeg is missing required filters: {names}{libass}. "
+                "Set FFMPEG_PATH to a full FFmpeg build, e.g. ai/.tools/ffmpeg."
+            )
 
     def ffmpeg(self, *args: str, cwd: Path | None = None):
         return self.run(
@@ -385,7 +413,8 @@ class MediaTools:
             "+faststart",
             str(result),
         ]
-        self.ffmpeg(*args, cwd=directory)
+        with structlog.contextvars.bound_contextvars(media_step="final_mux"):
+            self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
         info["audio_mix"] = (
             "dialogue_then_silent_source"
