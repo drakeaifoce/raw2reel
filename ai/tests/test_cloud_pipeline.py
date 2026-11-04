@@ -87,7 +87,7 @@ def test_prepare_render_reuses_transcript_and_remaps_reordered_clips(tmp_path):
         tmp_path / "result.mp4",
         analysis=artifact,
         person_ids=["p1"],
-        duration=2,
+        duration=15,
         captions=False,
     )
     assert meta.transcriptions == 1
@@ -95,9 +95,13 @@ def test_prepare_render_reuses_transcript_and_remaps_reordered_clips(tmp_path):
     assert manifest["clips"][0]["output_start"] == 0
     assert manifest["clips"][1]["output_start"] == 1
     assert manifest["impact_start"] == 1
+    assert manifest["requested_duration"] == 15
+    assert manifest["duration"] == pytest.approx(20, abs=0.04)
+    assert len(manifest["clips"]) >= 20
+    assert all(c["output_end"] - c["output_start"] <= 0.9 + 1e-6 for c in manifest["clips"][1:])
     assert manifest["reviewed_seconds"] <= settings.cloud_review_seconds
     assert manifest["tracks"]
-    assert tools.probe(tmp_path / "result.mp4")["duration"] == pytest.approx(2, abs=0.04)
+    assert tools.probe(tmp_path / "result.mp4")["duration"] == pytest.approx(20, abs=0.04)
     changed = tmp_path / "changed.mp4"
     changed.write_bytes(source.read_bytes() + b"changed")
     with pytest.raises(ValueError, match="does not match"):
@@ -291,7 +295,13 @@ def test_grouping_limit_reports_actual_reason_without_cloud_calls(tmp_path, monk
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
     pipeline = CloudPipeline(
-        Settings(_env_file=None, cloud_face_min_size_enabled=False, cloud_face_dedup_enabled=False),
+        Settings(
+            _env_file=None,
+            cloud_face_min_size_enabled=False,
+            cloud_face_dedup_enabled=False,
+            cloud_discovery_frames=48,
+            cloud_max_observations=256,
+        ),
         meta=FakeMeta(),
         cloud=DistinctPeople(),
     )

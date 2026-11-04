@@ -25,14 +25,15 @@ from .cloud_models import (
     TranscriptTurn,
 )
 from .config import Settings
+from .edit_structure import EDIT_SECONDS, build_edit
 from .face_filters import FaceFilters
 from .media import MediaTools
 from .meta import MetaClient, MetaError
-from .models import Segment
 from .observability import logged_operation
 from .pipeline_io import fingerprint, has_signal, write_json
-from .planning import make_srt, quantize_segments
-from .reframing import portrait_filter, remap_impact
+from .planning import make_ass
+from .reframing import portrait_filter
+from .soundtrack import DropPoint, align_music, find_drop
 
 log = structlog.get_logger(__name__)
 
@@ -241,6 +242,15 @@ class CloudPipeline:
             raise ValueError("Choose 1..16 people and an MP4 output")
         if not 0 < duration <= 30:
             raise ValueError("Duration must be in (0,30]")
+        requested_duration = duration
+        duration = EDIT_SECONDS
+        log.info(
+            "edit_policy",
+            requested_duration=requested_duration,
+            effective_duration=duration,
+            setup_max_shots=2,
+            impact_shot_seconds=[0.4, 0.9],
+        )
         sidecar = output.with_suffix(".v2.json")
         inputs = {source}
         if isinstance(analysis, Path):
@@ -364,12 +374,22 @@ class CloudPipeline:
                 warnings.append("Tracking budget reached; remaining footage has unknown presence.")
             progress("detecting_beats")
             bpm, beats = self.tools.beats(music, work) if music else (None, [])
+            drop = find_drop(self.tools, music, work) if music else DropPoint(0, "none")
+            if music and drop.method == "fallback":
+                warnings.append("No confident soundtrack drop; music entry starts at impact.")
+            if not music:
+                warnings.append("No soundtrack supplied; impact source audio is still muted.")
+            if not catalog.turns:
+                warnings.append("No timed speech available; setup uses visual context.")
+            log.info("soundtrack_drop", drop_seconds=drop.seconds, method=drop.method)
             progress("preselecting")
             turns = [t.model_dump() for t in catalog.turns]
             selection = self.cloud.structured(
                 Selection,
                 "Select candidate IDs worth watching for an edit about selected characters. "
-                "Prefer strong dialogue, conflict, action, reactions and context. Silent scenes "
+                "Find a coherent 6-8 second spoken setup in at most two scenes, plus strong "
+                "reaction/action highlights for a rapid silent-source impact montage. "
+                "Silent scenes "
                 "can be valuable. Unknown presence is not absence. Include context around speech. "
                 f"Target edit {duration}s; "
                 f"review budget {self.settings.cloud_review_seconds}s. "
@@ -430,13 +450,22 @@ class CloudPipeline:
                 EditPlan,
                 "Watch this review montage and make a two-part edit: dialogue/story setup, then "
                 "music-led impact. First write narrative, then an ordered exact edit plan. "
+                "SETUP: one or at most two shots, ideally 6-8 seconds total, a coherent complete "
+                "spoken phrase with minimal scene changes. Never cut the setup into rapid shots. "
+                "IMPACT: many short 0.4-0.9 second reaction/action shots, no dialogue needed: "
+                "source speech and subtitles will be removed. Choose varied strong expressions "
+                "and movement. Put impact_start exactly on the setup/impact cut. "
+                "Prefer a 20-second plan. The renderer fills remaining time with rhythmic reuse "
+                "of your approved impact intervals if material is scarce. Supply non-overlapping "
+                "source intervals as the material reservoir; do not duplicate intervals yourself. "
                 "Reference images follow selected_people order. "
                 "Use only viewed intervals showing a selected character. "
                 "Clip start/end MUST be original SOURCE seconds, translated using the mapping, "
                 "not montage time. Each clip must fit inside ONE reviewed source interval; "
                 "clips must not overlap but may be reordered. Never invent events. "
                 f"Total duration must be <= {duration}s and > 0. "
-                "impact_start: FINAL OUTPUT seconds. music_start: soundtrack offset. "
+                "impact_start: FINAL OUTPUT seconds. music_start: use 0; the renderer aligns "
+                "the measured soundtrack drop deterministically. "
                 "Align impact and cuts to provided beats if useful; do not exceed valid intervals. "
                 "Data:\n"
                 + json.dumps(
@@ -446,6 +475,7 @@ class CloudPipeline:
                         "transcript": turns,
                         "bpm": bpm,
                         "beats": beats[:400],
+                        "soundtrack_drop": drop.seconds if music else None,
                         "music_duration": self.tools.probe(music, video=False)["duration"]
                         if music
                         else None,
@@ -464,15 +494,22 @@ class CloudPipeline:
                     raise MetaError(
                         "model_response", "Edit uses unreviewed footage or unknown people."
                     )
-            if music and plan.music_start >= self.tools.probe(music, video=False)["duration"]:
-                raise MetaError("model_response", "Music offset outside soundtrack.")
-            segments = quantize_segments(
-                [
-                    Segment(start=c.start, end=c.end, reason=c.reason, subject_ids=c.person_ids)
-                    for c in plan.clips
-                ]
+            progress("constructing_edit")
+            edit = build_edit(
+                plan, bpm=bpm, impact_beats=[b - drop.seconds for b in beats if b >= drop.seconds]
             )
-            impact = remap_impact(plan.clips, segments, plan.impact_start)
+            segments, impact = edit.segments, edit.impact_start
+            warnings.extend(edit.warnings)
+            timing = align_music(drop.seconds, impact)
+            log.info(
+                "edit_constructed",
+                duration=EDIT_SECONDS,
+                setup_seconds=impact,
+                shots=len(segments),
+                music_offset=timing.offset,
+                music_delay=timing.delay,
+                drop_method=drop.method,
+            )
             filters = [
                 portrait_filter(
                     s,
@@ -495,12 +532,14 @@ class CloudPipeline:
                 source,
                 segments,
                 work,
-                make_srt(turns, segments) if captions else "",
+                make_ass(turns, segments, until=impact) if captions else "",
                 info["has_audio"],
                 music,
                 portrait_filters=filters,
                 impact_start=impact,
-                music_start=plan.music_start,
+                music_start=timing.offset,
+                music_delay=timing.delay,
+                epic=True,
             )
             timeline, position = [], 0.0
             for segment in segments:
@@ -519,7 +558,12 @@ class CloudPipeline:
                 "narrative": plan.narrative,
                 "clips": timeline,
                 "impact_start": impact,
-                "music_start": plan.music_start,
+                "music_start": timing.offset,
+                "music_delay": timing.delay,
+                "music_drop": drop.seconds if music else None,
+                "music_drop_method": drop.method,
+                "requested_duration": requested_duration,
+                "edit_style": "two_part_epic_20s",
                 "duration": result["duration"],
                 "bpm": bpm,
                 "audio_mix": result["audio_mix"],

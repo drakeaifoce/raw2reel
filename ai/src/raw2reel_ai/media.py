@@ -11,6 +11,7 @@ from pathlib import Path
 import structlog
 
 from .config import Settings
+from .editing_effects import GRADE, NORMALIZE, epic_mix, impact_zoom, setup_audio
 from .models import Segment
 from .observability import configure_logging
 from .reframing import portrait_filter
@@ -228,11 +229,16 @@ class MediaTools:
         portrait_filters: list[str] | None = None,
         impact_start: float,
         music_start: float = 0,
+        music_delay: float = 0,
+        epic: bool = False,
     ) -> tuple[Path, dict]:
         outputs = []
+        encoded = {}
+        position = 0.0
+        impact_index = 0
         if portrait_filters is not None and len(portrait_filters) != len(segments):
             raise ValueError("One portrait filter is required per segment")
-        if not math.isfinite(music_start) or music_start < 0:
+        if not all(math.isfinite(t) and t >= 0 for t in (music_start, music_delay)):
             raise ValueError("Invalid music offset")
         total_duration = sum(s.end - s.start for s in segments)
         if not 0 <= impact_start < total_duration:
@@ -240,6 +246,21 @@ class MediaTools:
         for index, segment in enumerate(segments):
             clip = directory / f"cut-{index}.mov"
             clip_duration = segment.end - segment.start
+            video_filter = "setpts=PTS-STARTPTS," + (
+                portrait_filters[index]
+                if portrait_filters is not None
+                else portrait_filter(segment, [], [])
+            )
+            if epic:
+                if position >= impact_start - 1e-6:
+                    video_filter += "," + impact_zoom(round(clip_duration * 30), impact_index)
+                    impact_index += 1
+                video_filter += "," + GRADE
+            position += clip_duration
+            key = (segment.start, segment.end, video_filter)
+            if key in encoded:
+                outputs.append(encoded[key])
+                continue
             args = [
                 "-protocol_whitelist",
                 "file,pipe",
@@ -265,12 +286,7 @@ class MediaTools:
                 "-map",
                 "[audio]" if has_audio else "1:a:0",
                 "-vf",
-                "setpts=PTS-STARTPTS,"
-                + (
-                    portrait_filters[index]
-                    if portrait_filters is not None
-                    else portrait_filter(segment, [], [])
-                ),
+                video_filter,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -293,12 +309,14 @@ class MediaTools:
             ]
             self.ffmpeg(*args)
             outputs.append(clip)
+            encoded[key] = clip
         listing = directory / "cuts.txt"
         listing.write_text("\n".join(f"file '{p.name}'" for p in outputs))
         # PCM intermediates avoid adding an AAC encoder delay at every cut.
         joined = directory / "joined.mov"
         self.ffmpeg("-f", "concat", "-safe", "1", "-i", str(listing), "-c", "copy", str(joined))
-        subtitle = directory / "captions.srt"
+        ass = srt.startswith("[Script Info]")
+        subtitle = directory / ("captions.ass" if ass else "captions.srt")
         subtitle.write_text(srt, encoding="utf-8")
         result = directory / "render.mp4"
         duration = sum(s.end - s.start for s in segments)
@@ -315,6 +333,8 @@ class MediaTools:
                 "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
                 "alimiter=limit=0.89125:level=false:latency=true[a]"
             )
+            if epic:
+                mix = epic_mix(impact_start, music_delay)
             args += [
                 "-stream_loop",
                 "-1",
@@ -329,13 +349,22 @@ class MediaTools:
                 "-map",
                 "[a]",
             ]
+        elif epic:
+            args += ["-af", NORMALIZE + "," + setup_audio(impact_start)]
         if srt:
             # Fixed relative filename avoids FFmpeg filter injection/path escaping.
             # Set script resolution too: SRT's default ASS canvas otherwise scales the font up.
+            subtitle_filter = (
+                "ass=captions.ass"
+                if ass
+                else (
+                    "subtitles=captions.srt:force_style='PlayResX=720,PlayResY=1280,"
+                    "FontName=DejaVu Sans,FontSize=36,Outline=2,MarginL=40,MarginR=40,MarginV=80'"
+                )
+            )
             args += [
                 "-vf",
-                "subtitles=captions.srt:force_style='PlayResX=720,PlayResY=1280,"
-                "FontName=DejaVu Sans,FontSize=36,Outline=2,MarginL=40,MarginR=40,MarginV=80'",
+                subtitle_filter,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -358,7 +387,13 @@ class MediaTools:
         ]
         self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
-        info["audio_mix"] = "two_phase_dialogue_then_music" if music else "original"
+        info["audio_mix"] = (
+            "dialogue_then_silent_source"
+            if epic and not music
+            else "two_phase_dialogue_then_music"
+            if music
+            else "original"
+        )
         if (
             info["width"] != 720
             or info["height"] != 1280

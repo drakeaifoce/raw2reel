@@ -56,7 +56,7 @@ def _caption_chunks(text: str) -> list[list[str]]:
     return chunks
 
 
-def make_srt(turns: list[dict], segments: list[Segment]) -> str:
+def _caption_cues(turns: list[dict], segments: list[Segment]):
     """Short rolling captions; within-turn word timing is estimated, not forced alignment."""
     captions = []
     offset = 0.0
@@ -94,7 +94,59 @@ def make_srt(turns: list[dict], segments: list[Segment]) -> str:
             end = min(end, captions[index + 1][0])
         if end - start >= 0.08:
             serial.append((start, end, text))
+    return serial
+
+
+def make_srt(turns: list[dict], segments: list[Segment]) -> str:
+    """Short rolling captions with estimated within-turn timing."""
+    serial = _caption_cues(turns, segments)
     return "\n\n".join(
         f"{index}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}"
         for index, (start, end, text) in enumerate(serial, 1)
+    )
+
+
+def _ass_time(seconds: float) -> str:
+    # Round inward so no subtitle remains on the first impact frame.
+    centiseconds = max(0, math.floor(seconds * 100 + 1e-6))
+    hours, centiseconds = divmod(centiseconds, 360000)
+    minutes, centiseconds = divmod(centiseconds, 6000)
+    secs, cs = divmod(centiseconds, 100)
+    return f"{hours}:{minutes:02}:{secs:02}.{cs:02}"
+
+
+def make_ass(turns: list[dict], segments: list[Segment], *, until: float) -> str:
+    """Setup-only karaoke: current word yellow, other words white.
+
+    Word timing is estimated from timed speech turns; it is not forced alignment.
+    Input text has already had ASS/HTML control syntax stripped by _caption_cues.
+    """
+    events = []
+    for start, end, text in _caption_cues(turns, segments):
+        words = text.split()
+        for index in range(len(words)):
+            word_start = start + (end - start) * index / len(words)
+            word_end = min(until, start + (end - start) * (index + 1) / len(words))
+            if word_end - word_start < 0.04:
+                continue
+            highlighted = " ".join(
+                r"{\c&H00FFFF&}" + word + r"{\c&HFFFFFF&}" if i == index else word
+                for i, word in enumerate(words)
+            )
+            events.append(
+                f"Dialogue: 0,{_ass_time(word_start)},{_ass_time(word_end)},"
+                f"Default,,0,0,0,,{highlighted}"
+            )
+    if not events:
+        return ""
+    return (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n"
+        "WrapStyle: 2\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,DejaVu Sans,40,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,"
+        "-1,0,0,0,100,100,0,0,1,2,1,2,40,40,110,1\n\n[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        + "\n".join(events)
     )
