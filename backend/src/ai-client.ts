@@ -145,9 +145,17 @@ export class HttpAiClient implements AiClient {
         },
         body: streamOf(multipart(boundary, parts)[Symbol.asyncIterator]()),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        // У Bun свой предел fetch в 300 секунд, и AbortSignal его НЕ
+        // отменяет. Из-за него любой рендер длиннее пяти минут обрывался с
+        // «The operation timed out», хотя AI-сервис продолжал работу и
+        // успешно заканчивал: 04.11 воркер отвалился на 5:04, сервис отдал
+        // 200 на 10:23, а готовый ролик было уже некому принять. С выходом
+        // к Meta через Индию рендеры идут 7-11 минут, то есть падали почти
+        // всегда. Ограничение остаётся за AbortSignal выше.
+        timeout: false,
         // Обязательно при потоковом теле: иначе запрос не отправится.
         duplex: 'half',
-      } as RequestInit & { duplex: 'half' })
+      } as RequestInit & { duplex: 'half'; timeout: false })
     } catch (error) {
       return {
         status: 'unavailable',

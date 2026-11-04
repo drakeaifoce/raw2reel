@@ -57,6 +57,14 @@ export interface RenderJobRepository {
   finish(id: string, resultMediaId?: string): Promise<void>
   fail(id: string, message: string): Promise<void>
   requeue(id: string): Promise<void>
+  /**
+   * Задачи, которые давно не двигались. Нужны для восстановления: сообщение
+   * могло уйти из очереди, а запись остаться незакрытой — например, ack
+   * прошёл, а обновление не записалось, или воркер убит между вызовами.
+   * Такая задача иначе висит в rendering навсегда и выглядит для
+   * пользователя бесконечной загрузкой.
+   */
+  stale(before: string, limit: number): Promise<RenderJob[]>
 }
 
 export class RenderJobService implements RenderJobRepository {
@@ -119,6 +127,17 @@ export class RenderJobService implements RenderJobRepository {
       { id },
       { $set: { status: 'failed', error: message, updatedAt: new Date().toISOString() } },
     )
+  }
+
+  async stale(before: string, limit: number): Promise<RenderJob[]> {
+    await this.indexesReady
+    return this.collection
+      .find(
+        { status: { $in: ['queued', 'rendering'] }, updatedAt: { $lt: before } },
+        { projection: { _id: 0 } },
+      )
+      .limit(limit)
+      .toArray()
   }
 
   /** Возврат в очередь: статус снова queued, счётчик попыток сохраняется. */

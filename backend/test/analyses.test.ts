@@ -139,6 +139,16 @@ class MemoryJobs implements RenderJobRepository {
     const record = this.records.get(id)
     if (record) Object.assign(record, { status: 'failed', error: message })
   }
+  async stale(before: string, limit: number): Promise<RenderJob[]> {
+    return [...this.records.values()]
+      .filter(
+        (record) =>
+          (record.status === 'queued' || record.status === 'rendering') &&
+          record.updatedAt < before,
+      )
+      .slice(0, limit)
+  }
+
   async requeue(id: string) {
     const record = this.records.get(id)
     if (record) record.status = 'queued'

@@ -15,6 +15,7 @@ import { config } from './config'
 import { createMediaService } from './media'
 import type { QueueOutcome } from './queue'
 import { MAX_DELIVERIES, createRenderQueue } from './queue'
+import { sweepStuckJobs } from './reaper'
 import { resolveAnalysis } from './render-analysis'
 import { createRenderJobService, type RenderJob } from './render-jobs'
 
@@ -232,9 +233,27 @@ const handle = async (jobId: string): Promise<QueueOutcome> => {
   return (job.kind ?? 'render') === 'prepare' ? runPrepare(job) : runRender(job)
 }
 
+/**
+ * Подбор застрявших задач. Очередь переотдаёт сообщение сама, если воркер
+ * умер, но не поможет там, где сообщения уже нет, а запись осталась
+ * незакрытой. Раз в пять минут — редко настолько, чтобы не мешать работе, и
+ * часто настолько, чтобы пользователь не ждал неизвестно чего.
+ */
+const SWEEP_INTERVAL_MS = 5 * 60_000
+const sweeper = setInterval(() => {
+  void sweepStuckJobs(jobs!, queue)
+    .then(({ requeued, failed }) => {
+      if (requeued || failed) {
+        console.log(`подбор застрявших: вернул ${requeued}, признал провалом ${failed}`)
+      }
+    })
+    .catch((error) => console.warn('подбор застрявших не удался', error))
+}, SWEEP_INTERVAL_MS)
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     console.log(`${signal}: закрываю очередь`)
+    clearInterval(sweeper)
     queue.close().finally(() => process.exit(0))
   })
 }
