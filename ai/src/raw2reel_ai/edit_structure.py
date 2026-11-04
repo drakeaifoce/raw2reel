@@ -46,15 +46,20 @@ def build_edit(plan: EditPlan, *, bpm: float | None = None, impact_beats=()) -> 
     warnings = []
     if not setup:
         clip = plan.clips[0]
-        setup = [(clip, clip.start, min(8 * FPS, math.floor((clip.end - clip.start) * FPS + 1e-6)))]
+        setup = [
+            (clip, clip.start, min(14 * FPS, math.floor((clip.end - clip.start) * FPS + 1e-6)))
+        ]
         warnings.append("No dialogue setup was supplied; the first approved shot is used.")
-    segments = []
-    used = 0
-    for clip, start, frames in setup[:2]:
-        frames = min(frames, 8 * FPS - used)
-        if frames > 0:
-            segments.append(_segment(clip, start, frames))
-            used += frames
+    if len(setup) > 2:
+        raise ValueError(
+            "Dialogue setup needs more than two shots; select a complete shorter phrase"
+        )
+    used = sum(frames for _, _, frames in setup)
+    if used > 14 * FPS:
+        raise ValueError(
+            "Dialogue setup is longer than 14 seconds; select a complete shorter phrase"
+        )
+    segments = [_segment(clip, start, frames) for clip, start, frames in setup]
     if not used:
         raise ValueError("Approved setup is shorter than one output frame")
     if used < 6 * FPS:

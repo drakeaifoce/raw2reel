@@ -48,7 +48,7 @@ def test_crop_prioritizes_first_person_and_falls_back_smoothly():
     ]
     centers = crop_centers(segment, points, ["p1", "p2"])
     assert centers[0][1] == pytest.approx(0.15)
-    assert 0.15 < centers[-1][1] < 0.5
+    assert centers[-1][1] == pytest.approx(0.15)
     assert "scale=720:1280" in portrait_filter(segment, points, ["p1", "p2"])
 
 

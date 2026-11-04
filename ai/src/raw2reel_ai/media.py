@@ -203,6 +203,57 @@ class MediaTools:
             str(output),
         )
 
+    def dialogue_audio(self, source: Path, segments: list[Segment], until: float, directory: Path):
+        """The exact reordered setup audio, on the final output clock, before mixing."""
+        args = []
+        labels = []
+        filters = []
+        position = 0.0
+        for segment in segments:
+            length = min(segment.end - segment.start, until - position)
+            if length <= 1e-6:
+                break
+            index = len(labels)
+            args += [
+                "-protocol_whitelist",
+                "file,pipe",
+                "-ss",
+                str(segment.start),
+                "-i",
+                str(source),
+            ]
+            label = f"s{index}"
+            filters.append(
+                f"[{index}:a:0]aresample=24000,asetpts=PTS-STARTPTS,apad,"
+                f"atrim=duration={length:.9f}[{label}]"
+            )
+            labels.append(f"[{label}]")
+            position += length
+        if not labels:
+            raise ValueError("No dialogue interval")
+        filters.append("".join(labels) + f"concat=n={len(labels)}:v=0:a=1[a]")
+        output = directory / "dialogue.wav"
+        self.ffmpeg(
+            *args,
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[a]",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-c:a",
+            "pcm_s16le",
+            "-t",
+            str(until),
+            "-map_metadata",
+            "-1",
+            str(output),
+        )
+        return output
+
     def beats(self, music: Path, directory: Path) -> tuple[float | None, list[float]]:
         audio = directory / "beats.wav"
         self.ffmpeg(

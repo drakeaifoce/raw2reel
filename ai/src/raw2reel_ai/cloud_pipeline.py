@@ -31,8 +31,9 @@ from .media import MediaTools
 from .meta import MetaClient, MetaError
 from .observability import logged_operation
 from .pipeline_io import fingerprint, has_signal, write_json
-from .planning import make_ass
-from .reframing import portrait_filter
+from .reframing import detect_content_bounds, portrait_filter
+from .render_captions import setup_captions
+from .render_tracking import refine_tracks, shot_tracks
 from .soundtrack import DropPoint, align_music, find_drop
 
 log = structlog.get_logger(__name__)
@@ -388,7 +389,8 @@ class CloudPipeline:
             selection = self.cloud.structured(
                 Selection,
                 "Select candidate IDs worth watching for an edit about selected characters. "
-                "Find a coherent 6-8 second spoken setup in at most two scenes, plus strong "
+                "Find a COMPLETE spoken thought in one or two scenes, ending naturally at a "
+                "sentence/phrase boundary; duration is flexible. Also find strong "
                 "reaction/action highlights for a rapid silent-source impact montage. "
                 "Silent scenes "
                 "can be valuable. Unknown presence is not absence. Include context around speech. "
@@ -418,7 +420,7 @@ class CloudPipeline:
                 if reviewed_seconds + c.end - c.start > self.settings.cloud_review_seconds:
                     continue
                 clip = work / f"review-{len(reviewed)}.mp4"
-                self.media.clip(source, c, clip)
+                self.media.clip(source, c, clip, include_audio=info["has_audio"])
                 actual = self.tools.probe(clip)["duration"]
                 if reviewed_seconds + actual > self.settings.cloud_review_seconds:
                     clip.unlink()
@@ -451,8 +453,13 @@ class CloudPipeline:
                 EditPlan,
                 "Watch this review montage and make a two-part edit: dialogue/story setup, then "
                 "music-led impact. First write narrative, then an ordered exact edit plan. "
-                "SETUP: one or at most two shots, ideally 6-8 seconds total, a coherent complete "
-                "spoken phrase with minimal scene changes. Never cut the setup into rapid shots. "
+                "SETUP: one or at most two shots containing a COMPLETE spoken thought. "
+                "LISTEN to the supplied audio, do not infer word boundaries from evenly-spaced "
+                "transcript text. Prefer 3-10 seconds; allow up to 14 to finish naturally. "
+                "Quote the complete spoken setup in narrative. End after its final word with a "
+                "brief natural pause. Never stop mid-clause at a duration or camera cut. "
+                "If a phrase cannot finish within two shots/14 seconds, choose a different phrase. "
+                "Never cut the setup into rapid shots or skip words between setup clips. "
                 "IMPACT: many short 0.4-0.9 second reaction/action shots, no dialogue needed: "
                 "source speech and subtitles will be removed. Choose varied strong expressions "
                 "and movement. Put impact_start exactly on the setup/impact cut. "
@@ -511,29 +518,68 @@ class CloudPipeline:
                 music_delay=timing.delay,
                 drop_method=drop.method,
             )
-            filters = [
-                portrait_filter(
-                    s,
-                    [
-                        t
-                        for t in tracks
-                        if catalog.scenes[t.scene].start <= s.start < catalog.scenes[t.scene].end
-                    ],
-                    person_ids,
-                    aspect_ratio=aspect_ratio,
+            progress("refining_framing")
+            refined = refine_tracks(
+                source,
+                segments,
+                catalog.scenes,
+                {pid: images[known[pid].observation_ids[0]] for pid in person_ids},
+                tracks,
+                settings=self.settings,
+                cloud=self.cloud,
+                media=self.media,
+                tools=self.tools,
+                work=work,
+                used_seconds=track_seconds,
+            )
+            tracks, track_seconds = refined.tracks, refined.used_seconds
+            warnings.extend(refined.warnings)
+            # Detect only stable bars across multiple selected source frames.
+            samples = []
+            for s in sorted(segments, key=lambda c: -(c.end - c.start)):
+                if len(samples) >= 5:
+                    break
+                data = self.media.frame(
+                    source, (s.start + s.end) / 2, work / f"content-{len(samples)}.jpg"
                 )
-                for s in segments
-            ]
-            if not tracks:
-                warnings.append("No reliable SAM track; using central crop.")
-            elif any(not any(s.start <= t.time < s.end for t in tracks) for s in segments):
-                warnings.append("Some selected clips have no reliable track; central crop is used.")
+                with Image.open(io.BytesIO(data)) as frame:
+                    samples.append(frame.copy())
+            content_bounds = detect_content_bounds(samples)
+            if samples:
+                aspect_ratio = samples[0].width / samples[0].height
+            subtitle_text = ""
+            caption_turns = []
+            if captions and info["has_audio"]:
+                progress("captioning_dialogue")
+                subtitle_text, caption_turns = setup_captions(
+                    self.meta, self.tools, source, segments, impact, work
+                )
+            filters = []
+            for segment in segments:
+                points = shot_tracks(segment, tracks, catalog.scenes)
+                if points:
+                    filters.append(
+                        portrait_filter(
+                            segment,
+                            points,
+                            segment.subject_ids,
+                            aspect_ratio=aspect_ratio,
+                            content_bounds=content_bounds,
+                        )
+                    )
+                else:
+                    filters.append(
+                        "scale=720:1280:force_original_aspect_ratio=decrease,"
+                        "pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
+                    )
+            if any(not shot_tracks(s, tracks, catalog.scenes) for s in segments):
+                warnings.append("Some selected clips have no reliable track; full frame retained.")
             progress("rendering")
             rendered, result = self.tools.render(
                 source,
                 segments,
                 work,
-                make_ass(turns, segments, until=impact) if captions else "",
+                subtitle_text,
                 info["has_audio"],
                 music,
                 portrait_filters=filters,
@@ -565,6 +611,9 @@ class CloudPipeline:
                 "music_drop_method": drop.method,
                 "requested_duration": requested_duration,
                 "edit_style": "two_part_epic_20s",
+                "content_bounds": list(content_bounds),
+                "caption_timing": "final_dialogue_endpointing" if caption_turns else "none",
+                "caption_turns": caption_turns,
                 "duration": result["duration"],
                 "bpm": bpm,
                 "audio_mix": result["audio_mix"],

@@ -454,3 +454,56 @@ def test_early_soundtrack_drop_is_delayed_to_impact(tmp_path, tools):
     assert power(0.1, 0.5) < 2
     assert power(0.75, 0.9) > 2
     assert power(1.2, 1.5) > power(0.75, 0.9) * 2
+
+
+def test_dialogue_audio_keeps_cut_order_and_exact_duration(tmp_path, tools):
+    import array
+    import math
+
+    from raw2reel_ai.models import Segment
+
+    source = tmp_path / "words.mp4"
+    tools.ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:size=64x64:rate=30:duration=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=24000:duration=1",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=880:sample_rate=24000:duration=1",
+        "-filter_complex",
+        "[1:a][2:a]concat=n=2:v=0:a=1[a]",
+        "-map",
+        "0:v",
+        "-map",
+        "[a]",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        str(source),
+    )
+    segments = [
+        Segment(start=1, end=2, reason="second", subject_ids=[]),
+        Segment(start=0, end=1, reason="first", subject_ids=[]),
+    ]
+    path = tools.dialogue_audio(source, segments, 2, tmp_path)
+    with wave.open(str(path)) as wav:
+        rate = wav.getframerate()
+        values = array.array("h", wav.readframes(wav.getnframes()))
+    assert len(values) / rate == pytest.approx(2, abs=1 / rate)
+
+    def amplitude(frequency, start):
+        data = values[round(start * rate) : round((start + 0.2) * rate)]
+        return math.hypot(
+            sum(v * math.cos(2 * math.pi * frequency * i / rate) for i, v in enumerate(data)),
+            sum(v * math.sin(2 * math.pi * frequency * i / rate) for i, v in enumerate(data)),
+        )
+
+    assert amplitude(880, 0.3) > amplitude(440, 0.3) * 10
+    assert amplitude(440, 1.3) > amplitude(880, 1.3) * 10

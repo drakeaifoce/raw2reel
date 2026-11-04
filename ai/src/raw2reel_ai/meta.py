@@ -119,9 +119,11 @@ class MetaClient:
             return data
         raise MetaError("model_unavailable", "Meta Model API is unavailable.")
 
-    def transcribe(self, audio: Path) -> list[dict]:
+    def transcribe(self, audio: Path, *, mode: str = "DIARIZATION") -> list[dict]:
+        if mode not in {"DIARIZATION", "ENDPOINTING"}:
+            raise ValueError("Unsupported transcription mode")
         started = time.monotonic()
-        log.info("transcription_started", model=self.settings.muse_voice_model)
+        log.info("transcription_started", model=self.settings.muse_voice_model, mode=mode)
         with audio.open("rb") as stream:
             response = self._request(
                 "POST",
@@ -134,7 +136,7 @@ class MetaClient:
                             {
                                 "model": self.settings.muse_voice_model,
                                 "audioEncoding": "WAV",
-                                "mode": "DIARIZATION",
+                                "mode": mode,
                             }
                         ),
                         "application/json",

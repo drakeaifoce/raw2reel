@@ -143,3 +143,15 @@ def test_karaoke_cannot_inject_ass_tags():
         until=0.5,
     )
     assert r"\pos" not in text and "<b>" not in text
+
+
+def test_karaoke_does_not_retime_words_from_a_partially_clipped_phrase():
+    from raw2reel_ai.planning import make_ass
+
+    ass = make_ass(
+        [dict(startMs=0, endMs=6000, transcript="ONE TWO THREE FOUR FIVE SIX")],
+        [Segment(start=2, end=4, reason="middle", subject_ids=[])],
+        until=2,
+    )
+    assert "ONE" not in ass and "TWO" not in ass and "FIVE" not in ass
+    assert "THREE" in ass and "FOUR" in ass
