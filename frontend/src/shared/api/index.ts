@@ -23,3 +23,4 @@ export {
   type RenderJob,
   type RenderStatus,
 } from './renders'
+export { listSamples, takeSample, sampleContentUrl } from './samples'

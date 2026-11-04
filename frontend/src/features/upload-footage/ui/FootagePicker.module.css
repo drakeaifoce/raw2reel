@@ -110,3 +110,21 @@
   border-radius: var(--radius-full);
   background: var(--color-accent-soft);
 }
+
+.taking,
+.loadingSamples {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.taking {
+  flex: none;
+}
+
+.loadingSamples {
+  margin: 0;
+  font-size: 13px;
+}

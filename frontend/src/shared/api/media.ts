@@ -16,7 +16,7 @@ export async function listMedia(signal?: AbortSignal): Promise<MediaItem[]> {
   return body.items
 }
 
-function isMediaItem(item: unknown): item is MediaItem {
+export function isMediaItem(item: unknown): item is MediaItem {
   if (typeof item !== 'object' || item === null) return false
   const value = item as Record<string, unknown>
   return (
