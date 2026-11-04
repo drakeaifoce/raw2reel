@@ -1,19 +1,16 @@
 import { useState } from 'react'
 import { useProjectStore, useSelectedTrack } from '@/entities/project'
-import { BeatGrid, MOCK_BEAT_SEGMENTS, useReelStore } from '@/entities/reel'
+import { useReelStore } from '@/entities/reel'
 import { DownloadReelButton } from '@/features/download-reel'
 import { RestartReelButton } from '@/features/generate-reel'
 import { mediaUrl } from '@/shared/api'
 import { pluralize } from '@/shared/lib'
 import { Chip } from '@/shared/ui/chip'
 import { Eyebrow } from '@/shared/ui/eyebrow'
-import { CheckIcon, PauseIcon, PlayIcon } from '@/shared/ui/icon'
+import { CheckIcon } from '@/shared/ui/icon'
 import { PhoneFrame } from '@/shared/ui/phone-frame'
-import { usePlaybackMock } from '../model/usePlaybackMock'
 import styles from './ResultState.module.css'
 import layout from './StageLayout.module.css'
-
-const MOCK_DURATION_SEC = 27
 
 const formatDuration = (seconds: number) => {
   const whole = Math.round(seconds)
@@ -30,35 +27,30 @@ export function ResultState() {
   // The media route answers Range requests, so the reel streams and seeks directly.
   const src = resultMediaId ? mediaUrl(resultMediaId) : undefined
 
-  const length = resultMediaId ? duration : MOCK_DURATION_SEC
   const summary = [
-    length === undefined ? '9:16' : `${formatDuration(length)} · 9:16`,
-    resultMediaId && !track?.mediaId
+    duration === undefined ? '9:16' : `${formatDuration(duration)} · 9:16`,
+    !track?.mediaId
       ? 'No music'
-      : [track?.title ?? 'Track', track?.bpm && `${track.bpm} BPM`].filter(Boolean).join(' · '),
+      : [track.title, track.bpm && `${track.bpm} BPM`].filter(Boolean).join(' · '),
     faceCount > 0 ? pluralize(faceCount, 'face tracked', 'faces tracked') : 'Whole frame',
     'Captions on',
   ]
 
   return (
     <div className={layout.layout}>
-      {src ? (
-        <PhoneFrame width={280} tone={video?.tone}>
-          <video
-            className={styles.video}
-            src={src}
-            controls
-            playsInline
-            preload="metadata"
-            aria-label="Generated reel"
-            onLoadedMetadata={({ currentTarget }) => {
-              if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
-            }}
-          />
-        </PhoneFrame>
-      ) : (
-        <MockPreview tone={video?.tone} />
-      )}
+      <PhoneFrame width={280} tone={video?.tone}>
+        <video
+          className={styles.video}
+          src={src}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label="Generated reel"
+          onLoadedMetadata={({ currentTarget }) => {
+            if (Number.isFinite(currentTarget.duration)) setDuration(currentTarget.duration)
+          }}
+        />
+      </PhoneFrame>
 
       <div className={layout.details}>
         <div className={layout.heading}>
@@ -77,13 +69,6 @@ export function ResultState() {
           ))}
         </ul>
 
-        {!resultMediaId && (
-          <div className={styles.timeline}>
-            <Eyebrow tone="muted">Cuts on the beat grid</Eyebrow>
-            <BeatGrid segments={MOCK_BEAT_SEGMENTS} />
-          </div>
-        )}
-
         <div className={styles.actions}>
           <DownloadReelButton href={src} className={styles.primaryAction} />
           <RestartReelButton className={styles.secondaryAction} />
@@ -93,30 +78,5 @@ export function ResultState() {
         </p>
       </div>
     </div>
-  )
-}
-
-/** Simulated player for sample footage, which never reaches the renderer. */
-function MockPreview({ tone }: { tone?: string }) {
-  const playback = usePlaybackMock()
-
-  return (
-    <PhoneFrame width={280} tone={tone}>
-      <span className={styles.badge}>RAW2REEL EDIT</span>
-      <button
-        type="button"
-        className={styles.play}
-        aria-label={playback.playing ? 'Pause preview' : 'Play preview'}
-        onClick={playback.toggle}
-      >
-        {playback.playing ? <PauseIcon size={24} /> : <PlayIcon size={26} />}
-      </button>
-      <div className={styles.caption}>
-        <span className={styles.captionText}>[auto caption from your audio]</span>
-      </div>
-      <div className={styles.scrubber}>
-        <div className={styles.scrubberFill} style={{ width: `${playback.position}%` }} />
-      </div>
-    </PhoneFrame>
   )
 }

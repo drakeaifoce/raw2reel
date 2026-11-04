@@ -6,20 +6,15 @@ import { useReelStore } from '@/entities/reel'
 const REEL_DURATION_SEC = 15
 
 /**
- * Renders uploaded footage for real; bundled samples keep the simulated pipeline.
- * Without a finished analysis the renderer cuts the whole frame.
+ * Renders the selected footage. Without a finished analysis the renderer cuts the whole frame.
  */
 export function useGenerateReel() {
-  const start = useReelStore((state) => state.start)
   const render = useReelStore((state) => state.render)
 
   return useCallback(() => {
     const state = useProjectStore.getState()
     const { video, analysis, faceIds } = state
-    if (!video?.mediaId) {
-      start()
-      return
-    }
+    if (!video?.mediaId) return
     const source =
       analysis.status === 'done'
         ? { analysisId: analysis.id, personIds: faceIds }
@@ -30,5 +25,5 @@ export function useGenerateReel() {
       duration: REEL_DURATION_SEC,
       captions: true,
     })
-  }, [render, start])
+  }, [render])
 }

@@ -1,9 +1,9 @@
 import type { Face } from '@/entities/face/@x/video'
 
-/** Raw footage the reel is cut from — an upload, a server sample or a demo sample. */
+/** Raw footage the reel is cut from: an upload or a server sample. */
 export type Video = {
   id: string
-  /** Backend media id for stored footage; demo samples have none. */
+  /** Backend media id; absent for a server sample that is not taken yet. */
   mediaId?: string
   title: string
   meta: string
@@ -11,6 +11,6 @@ export type Video = {
   previewUrl?: string
   /** Placeholder poster tint until real thumbnails are available. */
   tone: string
-  /** Faces found in the footage; mocked for samples. */
+  /** Faces found in the footage. */
   faces: Face[]
 }

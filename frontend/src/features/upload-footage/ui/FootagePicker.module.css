@@ -128,3 +128,16 @@
   margin: 0;
   font-size: 13px;
 }
+
+.samplesFailed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.retry {
+  flex: none;
+}

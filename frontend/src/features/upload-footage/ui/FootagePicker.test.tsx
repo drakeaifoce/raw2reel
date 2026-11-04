@@ -92,10 +92,22 @@ test('takes a server sample video without uploading it from the browser', async 
   expect(mocks.createAnalysis).toHaveBeenCalledWith('copy-1')
 })
 
-test('offers the demo samples while the catalog has no videos', async () => {
+test('says so when the catalog has no sample videos', async () => {
   mocks.listSamples.mockResolvedValue([media('track-1', 'BANE.mp3', 'audio/mpeg')])
   render(<FootagePicker />)
 
   fireEvent.click(screen.getByRole('button', { name: /use a sample video/i }))
-  expect(await screen.findByText('Street skate session')).toBeTruthy()
+  expect(await screen.findByText(/no sample videos yet/i)).toBeTruthy()
+})
+
+test('retries the catalog after it fails to load', async () => {
+  mocks.listSamples
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue([media('sample-1', 'Beach day.mp4', 'video/mp4')])
+  render(<FootagePicker />)
+
+  fireEvent.click(screen.getByRole('button', { name: /use a sample video/i }))
+  expect((await screen.findByRole('alert')).textContent).toContain('could not be loaded')
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('button', { name: /beach day/i })).toBeTruthy()
 })

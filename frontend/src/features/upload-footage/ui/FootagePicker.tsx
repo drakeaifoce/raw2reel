@@ -105,7 +105,23 @@ export function FootagePicker() {
       </Button>
 
       {samplesOpen &&
-        (samples.options ? (
+        (samples.failed ? (
+          <div id={samplesId} role="alert" className={styles.samplesFailed}>
+            <span>Sample videos could not be loaded.</span>
+            <Button size="sm" className={styles.retry} onClick={samples.retry}>
+              Try again
+            </Button>
+          </div>
+        ) : !samples.options ? (
+          <p id={samplesId} className={styles.loadingSamples} role="status">
+            <Spinner size={14} />
+            Loading samples…
+          </p>
+        ) : samples.options.length === 0 ? (
+          <p id={samplesId} className={styles.loadingSamples}>
+            No sample videos yet. Upload your own clip.
+          </p>
+        ) : (
           <ul id={samplesId} className={styles.samples} aria-label="Sample videos">
             {samples.options.map((option) => (
               <li key={option.video.id}>
@@ -113,7 +129,6 @@ export function FootagePicker() {
                   video={option.video}
                   onSelect={samples.taking ? undefined : () => void samples.pick(option)}
                   actions={
-                    option.sampleId !== undefined &&
                     option.sampleId === samples.taking && (
                       <span className={styles.taking} role="status">
                         <Spinner size={14} />
@@ -125,11 +140,6 @@ export function FootagePicker() {
               </li>
             ))}
           </ul>
-        ) : (
-          <p id={samplesId} className={styles.loadingSamples} role="status">
-            <Spinner size={14} />
-            Loading samples…
-          </p>
         ))}
 
       {samples.error && (

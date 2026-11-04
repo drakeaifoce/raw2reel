@@ -14,7 +14,7 @@ type ReelState = {
   stage: ReelStage
   /** Generation progress, 0–100. */
   progress: number
-  /** Stored media of the finished reel; absent for the sample mock. */
+  /** Stored media of the finished reel. */
   resultMediaId?: string
   error?: string
   /** Backend job of a real render, kept so a reload can resume polling. */
@@ -24,8 +24,6 @@ type ReelState = {
 }
 
 type ReelActions = {
-  /** Starts a mocked generation for sample footage that finishes in roughly `durationSec`. */
-  start: (durationSec?: number) => void
   /** Queues a real render and follows it until the worker settles. */
   render: (input: CreateRenderInput) => Promise<void>
   /** Picks up a render that was in flight when the page was reloaded. */
@@ -43,9 +41,8 @@ const initialState: ReelState = {
   startedAt: undefined,
 }
 
-const TICK_MS = 100
+const TICK_MS = 500
 const COMPLETE_DELAY_MS = 450
-const DEFAULT_DURATION_SEC = 7
 
 const POLL_MS = 4000
 /** Consecutive failed polls tolerated before giving up, e.g. during a deploy. */
@@ -101,7 +98,7 @@ export const useReelStore = create<ReelState & ReelActions>()(
           const eased = RENDERING_CAP * (1 - Math.exp(-(Date.now() - startedAt) / RENDER_EASE_MS))
           set({ progress: Math.max(get().progress, Math.min(cap, eased)) })
         }
-        tickTimer = setInterval(tick, TICK_MS * 5)
+        tickTimer = setInterval(tick, TICK_MS)
 
         try {
           let job = await first()
@@ -137,21 +134,6 @@ export const useReelStore = create<ReelState & ReelActions>()(
       return {
         ...initialState,
 
-        start: (durationSec = DEFAULT_DURATION_SEC) => {
-          stopTimers()
-          currentRun += 1
-          set({ ...initialState, stage: 'generating' })
-
-          const baseStep = 100 / ((durationSec * 1000) / TICK_MS)
-          tickTimer = setInterval(() => {
-            // Jitter makes the bar feel like real work instead of a linear fill.
-            const jitter = 0.4 + Math.random() * 1.2
-            const next = Math.min(100, get().progress + baseStep * jitter)
-            set({ progress: next })
-            if (next >= 100) finish({})
-          }, TICK_MS)
-        },
-
         render: (input) => {
           set({ ...initialState, stage: 'generating', startedAt: Date.now() })
           return follow(() => createRender(input))
@@ -160,7 +142,7 @@ export const useReelStore = create<ReelState & ReelActions>()(
         resume: async () => {
           const { stage, renderId } = get()
           if (stage !== 'generating' || tickTimer) return
-          // The sample mock and a render the backend never acknowledged cannot be resumed.
+          // A render the backend never acknowledged cannot be resumed.
           if (!renderId) {
             set(initialState)
             return

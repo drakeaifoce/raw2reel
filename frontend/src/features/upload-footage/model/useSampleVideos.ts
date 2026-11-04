@@ -1,35 +1,32 @@
 import { useCallback, useEffect, useState } from 'react'
 import { analyzeFootage } from '@/entities/project'
-import { SAMPLE_VIDEOS, createSampleVideo, createUploadedVideo, type Video } from '@/entities/video'
+import { createSampleVideo, createUploadedVideo, type Video } from '@/entities/video'
 import { ApiError, listSamples, takeSample, type MediaItem } from '@/shared/api'
 import { useSelectFootage } from './useSelectFootage'
 
 type Catalog =
-  | { status: 'loading' }
-  | { status: 'ready'; samples: MediaItem[] }
-  /** Unreachable catalog: fall back to the demo samples. */
-  | { status: 'failed' }
+  { status: 'loading' } | { status: 'ready'; samples: MediaItem[] } | { status: 'failed' }
 
 export type SampleVideoOption = {
   video: Video
-  /** Server sample to take; demo samples have none and run on mocks. */
-  sampleId?: string
+  /** Server sample the user's copy is taken from. */
+  sampleId: string
 }
 
 /**
  * Sample footage from the backend catalog, loaded once the list is opened. The server
  * copies a taken sample into the user's media, so a large video never passes through
- * the browser. While the catalog has no videos, the demo samples stand in.
+ * the browser.
  */
 export function useSampleVideos(open: boolean) {
   const { selectFootage } = useSelectFootage()
   const [catalog, setCatalog] = useState<Catalog>({ status: 'loading' })
   const [taking, setTaking] = useState<string>()
   const [error, setError] = useState<string>()
-  const loaded = catalog.status !== 'loading'
+  const loading = catalog.status === 'loading'
 
   useEffect(() => {
-    if (!open || loaded) return
+    if (!open || !loading) return
     const controller = new AbortController()
     listSamples(controller.signal)
       .then((samples) => setCatalog({ status: 'ready', samples }))
@@ -37,25 +34,20 @@ export function useSampleVideos(open: boolean) {
         if (!controller.signal.aborted) setCatalog({ status: 'failed' })
       })
     return () => controller.abort()
-  }, [open, loaded])
+  }, [open, loading])
 
-  const videos =
+  const options: SampleVideoOption[] | undefined =
     catalog.status === 'ready'
-      ? catalog.samples.filter((sample) => sample.type.startsWith('video/'))
-      : []
-  const options: SampleVideoOption[] | undefined = !loaded
-    ? undefined
-    : videos.length > 0
-      ? videos.map((sample) => ({ video: createSampleVideo(sample), sampleId: sample.id }))
-      : SAMPLE_VIDEOS.map((video) => ({ video }))
+      ? catalog.samples
+          .filter((sample) => sample.type.startsWith('video/'))
+          .map((sample) => ({ video: createSampleVideo(sample), sampleId: sample.id }))
+      : undefined
+
+  const retry = useCallback(() => setCatalog({ status: 'loading' }), [])
 
   const pick = useCallback(
-    async ({ video, sampleId }: SampleVideoOption) => {
+    async ({ sampleId }: SampleVideoOption) => {
       setError(undefined)
-      if (!sampleId) {
-        selectFootage(video)
-        return
-      }
       setTaking(sampleId)
       try {
         const media = await takeSample(sampleId)
@@ -70,5 +62,5 @@ export function useSampleVideos(open: boolean) {
     [selectFootage],
   )
 
-  return { options, taking, error, pick }
+  return { options, failed: catalog.status === 'failed', taking, error, pick, retry }
 }
