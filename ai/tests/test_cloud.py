@@ -48,7 +48,7 @@ def test_crop_prioritizes_first_person_and_falls_back_smoothly():
     ]
     centers = crop_centers(segment, points, ["p1", "p2"])
     assert centers[0][1] == pytest.approx(0.15)
-    assert 0.15 < centers[-1][1] < 0.5
+    assert centers[-1][1] == pytest.approx(0.15)
     assert "scale=720:1280" in portrait_filter(segment, points, ["p1", "p2"])
 
 
@@ -113,7 +113,11 @@ def test_cli_debug_preserves_safe_stack(monkeypatch, capsys, tmp_path):
     ]
     assert cli.main(args) == 1
     output = capsys.readouterr().err
-    event = json.loads(output.splitlines()[-1])
+    event = next(
+        json.loads(line)
+        for line in output.splitlines()
+        if line.startswith("{") and "command_failed" in line
+    )
     assert event["error_type"] == "ValueError"
     assert event["traceback"][-1]["function"] == "prepare"
     assert "grouping diagnostic marker" not in output
@@ -130,7 +134,10 @@ def test_cloud_incomplete_and_missing_output_are_model_errors():
         output_text({"status": "completed", "output": None})
 
 
-def test_grouping_uses_low_reasoning_and_reports_progress(tmp_path):
+@pytest.mark.parametrize(
+    "stage", ["face_grouping", "preselection", "video_plan", "render_grounding"]
+)
+def test_structured_render_calls_use_bounded_reasoning(tmp_path, stage):
     import json
 
     import httpx
@@ -160,10 +167,7 @@ def test_grouping_uses_low_reasoning_and_reports_progress(tmp_path):
         Settings(_env_file=None, model_api_key="test"), transport=httpx.MockTransport(handler)
     )
     try:
-        assert (
-            CloudModels(client).structured(Grouping, "group", stage="face_grouping").assignments
-            == []
-        )
+        assert CloudModels(client).structured(Grouping, "group", stage=stage).assignments == []
     finally:
         client.close()
 
@@ -180,3 +184,39 @@ def test_analysis_validates_images_and_references():
     value["thumbnails"]["o99"] = value["thumbnails"].pop("o0")
     with pytest.raises(ValueError, match="thumbnail"):
         read_analysis(value)
+
+
+def test_invalid_structured_output_reports_safe_field_location(capsys):
+    import httpx
+
+    from raw2reel_ai.cloud_meta import CloudModels
+    from raw2reel_ai.cloud_models import Grouping
+    from raw2reel_ai.config import Settings
+    from raw2reel_ai.meta import MetaClient, MetaError
+
+    def handler(_):
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": '{"assignments":"PRIVATE_INPUT"}'}
+                        ],
+                    }
+                ],
+            },
+        )
+
+    client = MetaClient(
+        Settings(_env_file=None, model_api_key="test"), transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(MetaError, match="assignments"):
+            CloudModels(client).structured(Grouping, "test", stage="render_grounding")
+    finally:
+        client.close()
+    log = capsys.readouterr().err
+    assert "model_schema_invalid" in log and "PRIVATE_INPUT" not in log

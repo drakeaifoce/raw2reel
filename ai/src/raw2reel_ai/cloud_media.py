@@ -66,7 +66,7 @@ class CloudMedia:
         )
         return output.read_bytes()
 
-    def clip(self, source: Path, interval: Interval, output: Path):
+    def clip(self, source: Path, interval: Interval, output: Path, *, include_audio=False):
         self.tools.ffmpeg(
             "-ss",
             str(interval.start),
@@ -74,7 +74,20 @@ class CloudMedia:
             str(source),
             "-t",
             str(interval.end - interval.start),
-            "-an",
+            *(
+                [
+                    "-af",
+                    "aresample=48000:async=1:first_pts=0,apad",
+                    "-c:a",
+                    "aac",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                ]
+                if include_audio
+                else ["-an"]
+            ),
             "-vf",
             f"scale=640:-2,fps={self.tools.settings.cloud_analysis_fps}",
             "-c:v",

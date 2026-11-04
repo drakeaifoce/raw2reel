@@ -1,11 +1,12 @@
 # Raw2Reel
 
 AI-powered short-form video editing co-pilot for Instagram Reels and TikTok creators.
-Upload a raw media dump and get a beat-synced, captioned 9:16 reel ready to publish.
+Upload a source video, choose the characters and a soundtrack, and generate a 20-second 9:16 edit.
 
-- **Muse Spark** — script analysis and automated editing workflow
-- **Muse Vision** — visual highlight and face detection
-- **Muse Voice Transcribe** — real-time captions and voiceover
+- **SAM 3.1** — cloud face detection and selected-person tracking
+- **Muse Spark** — face grouping, scene selection and the narrative/edit plan
+- **Muse Voice Transcribe** — timed source dialogue and captions for the final setup
+- **FFmpeg / Pillow** — local media preparation, portrait framing, sound mixing and rendering
 
 ## Repository layout
 
@@ -24,8 +25,77 @@ Each app is self-contained: its own dependencies, scripts, linters and README.
 - [backend](backend/) — Bun, TypeScript. Talks to Cosmos DB over the MongoDB API
   and to Azure Blob Storage.
 - [ai](ai/) — Python 3.12, FastAPI, uv. Served under `/ml/*`. Orchestrates the
-  external Muse pipelines and preprocesses images; holds no local models.
+  cloud SAM/Muse calls and renders with FFmpeg; holds no local neural models.
 - [infra](infra/) — deployment and CI. Docs: [infra/README.md](infra/README.md)
+
+## How generation works
+
+1. The frontend uploads source media through the backend. `POST /api/analyses`
+   queues analysis; the worker calls AI `POST /v2/prepare` with the video.
+2. AI detects scenes, samples up to 16 frames, retains up to 32 face observations,
+   groups them into anonymous characters and transcribes source speech. These are
+   defaults, overridable in the AI environment. The backend stores the analysis;
+   the UI shows character thumbnails for selection.
+3. `POST /api/renders` queues generation with the analysis, selected people and
+   optional soundtrack. The worker sends the source and saved analysis to `/v2/render`.
+4. Spark selects material and watches a bounded review montage **with source audio**.
+   It chooses a context-rich spoken setup, preferably 6–10 seconds and at least
+   12 words, then reaction/action highlights. Isolated short reactions are discouraged. Setup length
+   follows the end of the thought, not a fixed 6–8 second timer: normally one or two
+   shots, up to 14 seconds, leaving at least six seconds for impact.
+5. The setup is checked against complete source utterances and adjacent dialogue
+   in reviewed footage,
+   with short context guards; it is extended to the spoken boundary when possible.
+   Unreviewed gaps are never filled. Code assembles 600 frames at 30 FPS. The impact section uses fast 0.4–0.9 second
+   shots, reusing approved footage when needed. Original audio and captions stop at
+   the transition; soundtrack gain rises to 0.5 after normalization. Zoom gestures
+   and mild color/sharpness correction are applied locally.
+6. Every selected scene is checked against the chosen face reference. Dense tracks
+   are reused only when they agree; missing or background-object tracks get further
+   SAM tracking within the tracking budget. Stable letterbox bars are removed before
+   portrait cropping and coordinates are transformed accordingly. If identity cannot
+   be located reliably, the complete frame is retained instead of cropping a person away.
+7. Captions are transcribed again from the **exact final setup audio**, in output order,
+   with speech endpoint detection, an ASR-only silence tail to flush short utterances,
+   a DIARIZATION fallback and low-energy padding trimmed. If recognition confirms the
+   full expected phrase, the transition follows its actual speech end plus a short pause. Word highlighting
+   is still approximate: Muse Voice supplies turn timestamps, not word timestamps.
+8. AI returns H.264/AAC MP4 at 720×1280. The backend stores it and updates the job;
+   the frontend polls status and exposes playback/download.
+
+`prepare` and `render` use cloud models. Rendering reuses the saved catalog, but
+selected-shot refinement and setup captioning can add cloud calls. No local GPU is
+required. The `duration` input remains accepted for compatibility; the current edit
+policy produces **20 seconds** even when the frontend sends 15. `captions=false`
+disables visible captions and the extra setup transcription.
+
+## Run the AI pipeline locally
+
+```bash
+cd ai
+uv sync --locked
+# Configure MODEL_API_KEY in ../.env; FFmpeg/ffprobe must be installed.
+.venv/bin/python -m raw2reel_ai --env-file ../.env prepare \
+  /path/to/source.mp4 --output outputs/prepared.json
+
+# Choose a person ID from prepared.json, then generate with the same source.
+.venv/bin/python -m raw2reel_ai --env-file ../.env --debug render-v2 \
+  /path/to/source.mp4 --analysis outputs/prepared.json --person p1 \
+  --music /path/to/music.mp3 --output outputs/reel.mp4
+```
+
+The output MP4 and `.v2.json` timeline are written side by side. An existing v2
+analysis remains compatible; rerun only `render-v2` to apply rendering changes.
+Local binaries in `ai/.tools/` take priority over PATH; explicit `FFMPEG_PATH` and
+`FFPROBE_PATH` override both. FFmpeg needs libx264, AAC and libass. Required render
+filters are checked before cloud calls; `--debug` shows readable traceback and the
+last 16 KiB of external FFmpeg diagnostics. Structured logs carry a `request_id`.
+AI HTTP additionally requires `AI_SERVICE_TOKEN` shared only with the backend.
+
+Detailed installation, environment variables, HTTP contract and tests:
+[AI README](ai/README.md), [pipeline contract](ai/CLOUD_PIPELINE.md),
+[logging](ai/LOGGING.md). For the complete site, also follow
+[backend setup](backend/README.md) and [infrastructure setup](infra/README.md).
 
 ## Quick start
 

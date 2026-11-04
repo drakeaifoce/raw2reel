@@ -4,6 +4,7 @@ import array
 import json
 import math
 import subprocess
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -11,13 +12,21 @@ from pathlib import Path
 import structlog
 
 from .config import Settings
+from .editing_effects import GRADE, NORMALIZE, epic_mix, impact_zoom, setup_audio
 from .models import Segment
 from .observability import configure_logging
 from .reframing import portrait_filter
 
 
 class MediaError(Exception):
-    pass
+    code = "media_error"
+
+    def __init__(self, message: str, *, stderr_tail: str = ""):
+        super().__init__(message)
+        # External diagnostic is for explicitly requested local CLI debug only.
+        # Never include it in str(error), HTTP responses or structured logs.
+        self.stderr_tail = stderr_tail
+        self.safe_message = message
 
 
 class MediaTools:
@@ -47,14 +56,18 @@ class MediaTools:
             )
 
         try:
-            result = subprocess.run(
-                arguments,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                cwd=cwd,
-                timeout=timeout or self.settings.media_timeout_seconds,
-                check=False,
-            )
+            with tempfile.TemporaryFile() as diagnostics:
+                result = subprocess.run(
+                    arguments,
+                    stdout=subprocess.PIPE,
+                    stderr=diagnostics,
+                    cwd=cwd,
+                    timeout=timeout or self.settings.media_timeout_seconds,
+                    check=False,
+                )
+                diagnostics.seek(0, 2)
+                diagnostics.seek(max(0, diagnostics.tell() - 16384))
+                stderr_tail = diagnostics.read().decode("utf-8", errors="replace")
         except FileNotFoundError:
             failed("executable_missing")
             variable = (
@@ -70,7 +83,7 @@ class MediaTools:
         if result.returncode:
             failed("nonzero_exit", exit_code=result.returncode)
             # Stderr can contain private paths and input metadata; never pass it to clients.
-            raise MediaError("Could not decode or render this media file.")
+            raise MediaError("Could not decode or render this media file.", stderr_tail=stderr_tail)
         log.debug(
             "media_command_completed",
             tool=tool,
@@ -78,6 +91,22 @@ class MediaTools:
             duration_ms=round((time.monotonic() - started) * 1000, 2),
         )
         return result.stdout
+
+    def validate_render_tools(self, *, captions: bool):
+        """Reject unsupported FFmpeg builds before cloud analysis is paid for."""
+        inventory = self.ffmpeg("-filters").decode("utf-8", errors="replace")
+        filters = {parts[1] for line in inventory.splitlines() if len(parts := line.split()) >= 3}
+        required = {"zoompan", "eq", "unsharp", "loudnorm", "aeval"}
+        if captions:
+            required.add("ass")
+        missing = sorted(required - filters)
+        if missing:
+            names = ", ".join(missing)
+            libass = " (libass subtitle support)" if "ass" in missing else ""
+            raise MediaError(
+                f"FFmpeg is missing required filters: {names}{libass}. "
+                "Set FFMPEG_PATH to a full FFmpeg build, e.g. ai/.tools/ffmpeg."
+            )
 
     def ffmpeg(self, *args: str, cwd: Path | None = None):
         return self.run(
@@ -174,6 +203,57 @@ class MediaTools:
             str(output),
         )
 
+    def dialogue_audio(self, source: Path, segments: list[Segment], until: float, directory: Path):
+        """The exact reordered setup audio, on the final output clock, before mixing."""
+        args = []
+        labels = []
+        filters = []
+        position = 0.0
+        for segment in segments:
+            length = min(segment.end - segment.start, until - position)
+            if length <= 1e-6:
+                break
+            index = len(labels)
+            args += [
+                "-protocol_whitelist",
+                "file,pipe",
+                "-ss",
+                str(segment.start),
+                "-i",
+                str(source),
+            ]
+            label = f"s{index}"
+            filters.append(
+                f"[{index}:a:0]aresample=24000,asetpts=PTS-STARTPTS,apad,"
+                f"atrim=duration={length:.9f}[{label}]"
+            )
+            labels.append(f"[{label}]")
+            position += length
+        if not labels:
+            raise ValueError("No dialogue interval")
+        filters.append("".join(labels) + f"concat=n={len(labels)}:v=0:a=1[a]")
+        output = directory / "dialogue.wav"
+        self.ffmpeg(
+            *args,
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[a]",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-c:a",
+            "pcm_s16le",
+            "-t",
+            str(until),
+            "-map_metadata",
+            "-1",
+            str(output),
+        )
+        return output
+
     def beats(self, music: Path, directory: Path) -> tuple[float | None, list[float]]:
         audio = directory / "beats.wav"
         self.ffmpeg(
@@ -228,11 +308,16 @@ class MediaTools:
         portrait_filters: list[str] | None = None,
         impact_start: float,
         music_start: float = 0,
+        music_delay: float = 0,
+        epic: bool = False,
     ) -> tuple[Path, dict]:
         outputs = []
+        encoded = {}
+        position = 0.0
+        impact_index = 0
         if portrait_filters is not None and len(portrait_filters) != len(segments):
             raise ValueError("One portrait filter is required per segment")
-        if not math.isfinite(music_start) or music_start < 0:
+        if not all(math.isfinite(t) and t >= 0 for t in (music_start, music_delay)):
             raise ValueError("Invalid music offset")
         total_duration = sum(s.end - s.start for s in segments)
         if not 0 <= impact_start < total_duration:
@@ -240,6 +325,21 @@ class MediaTools:
         for index, segment in enumerate(segments):
             clip = directory / f"cut-{index}.mov"
             clip_duration = segment.end - segment.start
+            video_filter = "setpts=PTS-STARTPTS," + (
+                portrait_filters[index]
+                if portrait_filters is not None
+                else portrait_filter(segment, [], [])
+            )
+            if epic:
+                if position >= impact_start - 1e-6:
+                    video_filter += "," + impact_zoom(round(clip_duration * 30), impact_index)
+                    impact_index += 1
+                video_filter += "," + GRADE
+            position += clip_duration
+            key = (segment.start, segment.end, video_filter)
+            if key in encoded:
+                outputs.append(encoded[key])
+                continue
             args = [
                 "-protocol_whitelist",
                 "file,pipe",
@@ -265,12 +365,7 @@ class MediaTools:
                 "-map",
                 "[audio]" if has_audio else "1:a:0",
                 "-vf",
-                "setpts=PTS-STARTPTS,"
-                + (
-                    portrait_filters[index]
-                    if portrait_filters is not None
-                    else portrait_filter(segment, [], [])
-                ),
+                video_filter,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -293,12 +388,14 @@ class MediaTools:
             ]
             self.ffmpeg(*args)
             outputs.append(clip)
+            encoded[key] = clip
         listing = directory / "cuts.txt"
         listing.write_text("\n".join(f"file '{p.name}'" for p in outputs))
         # PCM intermediates avoid adding an AAC encoder delay at every cut.
         joined = directory / "joined.mov"
         self.ffmpeg("-f", "concat", "-safe", "1", "-i", str(listing), "-c", "copy", str(joined))
-        subtitle = directory / "captions.srt"
+        ass = srt.startswith("[Script Info]")
+        subtitle = directory / ("captions.ass" if ass else "captions.srt")
         subtitle.write_text(srt, encoding="utf-8")
         result = directory / "render.mp4"
         duration = sum(s.end - s.start for s in segments)
@@ -315,6 +412,8 @@ class MediaTools:
                 "[voice][ducked]amix=inputs=2:duration=first:normalize=0,"
                 "alimiter=limit=0.89125:level=false:latency=true[a]"
             )
+            if epic:
+                mix = epic_mix(impact_start, music_delay)
             args += [
                 "-stream_loop",
                 "-1",
@@ -329,13 +428,22 @@ class MediaTools:
                 "-map",
                 "[a]",
             ]
+        elif epic:
+            args += ["-af", NORMALIZE + "," + setup_audio(impact_start)]
         if srt:
             # Fixed relative filename avoids FFmpeg filter injection/path escaping.
             # Set script resolution too: SRT's default ASS canvas otherwise scales the font up.
+            subtitle_filter = (
+                "ass=captions.ass"
+                if ass
+                else (
+                    "subtitles=captions.srt:force_style='PlayResX=720,PlayResY=1280,"
+                    "FontName=DejaVu Sans,FontSize=36,Outline=2,MarginL=40,MarginR=40,MarginV=80'"
+                )
+            )
             args += [
                 "-vf",
-                "subtitles=captions.srt:force_style='PlayResX=720,PlayResY=1280,"
-                "FontName=DejaVu Sans,FontSize=36,Outline=2,MarginL=40,MarginR=40,MarginV=80'",
+                subtitle_filter,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -356,9 +464,16 @@ class MediaTools:
             "+faststart",
             str(result),
         ]
-        self.ffmpeg(*args, cwd=directory)
+        with structlog.contextvars.bound_contextvars(media_step="final_mux"):
+            self.ffmpeg(*args, cwd=directory)
         info = self.probe(result)
-        info["audio_mix"] = "two_phase_dialogue_then_music" if music else "original"
+        info["audio_mix"] = (
+            "dialogue_then_silent_source"
+            if epic and not music
+            else "two_phase_dialogue_then_music"
+            if music
+            else "original"
+        )
         if (
             info["width"] != 720
             or info["height"] != 1280

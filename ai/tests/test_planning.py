@@ -110,3 +110,48 @@ def test_caption_blocks_respect_sentence_endings():
         [Segment(start=0, end=3, reason="speech", subject_ids=[])],
     )
     assert srt.split("\n\n")[0].splitlines()[2] == "Вот, здравствуйте."
+
+
+def test_karaoke_captions_end_before_impact_and_highlight_active_word():
+    from raw2reel_ai.models import Segment
+    from raw2reel_ai.planning import make_ass
+
+    segments = [
+        Segment(start=0, end=3, reason="setup", subject_ids=[]),
+        Segment(start=10, end=12, reason="impact", subject_ids=[]),
+    ]
+    turns = [
+        dict(startMs=0, endMs=3000, transcript="ONE TWO THREE FOUR FIVE SIX"),
+        dict(startMs=10000, endMs=12000, transcript="MUST NOT APPEAR"),
+    ]
+    ass = make_ass(turns, segments, until=2.5)
+    assert "[Script Info]" in ass and "MUST NOT APPEAR" not in ass
+    events = [line.split(",", 9) for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(events) >= 5
+    assert all(float(e[2].split(":")[-1]) <= 2.5 for e in events)
+    assert any(r"{\c&H00FFFF&}ONE" in e[9] for e in events)
+    assert any(r"{\c&H00FFFF&}TWO" in e[9] for e in events)
+
+
+def test_karaoke_cannot_inject_ass_tags():
+    from raw2reel_ai.models import Segment
+    from raw2reel_ai.planning import make_ass
+
+    text = make_ass(
+        [dict(startMs=0, endMs=1000, transcript=r"{\pos(0,0)}HELLO <b>WORLD</b>")],
+        [Segment(start=0, end=1, reason="safe", subject_ids=[])],
+        until=0.5,
+    )
+    assert r"\pos" not in text and "<b>" not in text
+
+
+def test_karaoke_does_not_retime_words_from_a_partially_clipped_phrase():
+    from raw2reel_ai.planning import make_ass
+
+    ass = make_ass(
+        [dict(startMs=0, endMs=6000, transcript="ONE TWO THREE FOUR FIVE SIX")],
+        [Segment(start=2, end=4, reason="middle", subject_ids=[])],
+        until=2,
+    )
+    assert "ONE" not in ass and "TWO" not in ass and "FIVE" not in ass
+    assert "THREE" in ass and "FOUR" in ass
