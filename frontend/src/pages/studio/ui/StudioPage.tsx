@@ -9,7 +9,6 @@ import { EditSetup } from '@/widgets/edit-setup'
 import { ReelOutput } from '@/widgets/reel-output'
 import styles from './StudioPage.module.css'
 import { authClient } from '@/shared/api'
-import { MediaList } from './MediaList'
 
 export function StudioPage() {
   const { data: session } = authClient.useSession()
@@ -37,7 +36,6 @@ export function StudioPage() {
       <main className={styles.main}>
         <EditSetup />
         <ReelOutput />
-        <MediaList />
       </main>
     </div>
   )
