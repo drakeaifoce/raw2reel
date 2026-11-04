@@ -24,6 +24,21 @@ const credentials = object({ email: string, password: { ...string, format: 'pass
 const empty = { ...object({}), additionalProperties: false }
 const refresh = { ...object({ refreshToken: string }), additionalProperties: false }
 const mediaSecurity = [{ accessBearer: [] }, { sessionCookie: [] }]
+// Заголовки отдачи медиа объявлены явно: в Swagger UI описание текстом не
+// подскажет клиенту, что ответ несёт Accept-Ranges и Content-Range, а без них
+// не написать ни перемотку, ни обработку 416.
+const acceptRangesHeader = {
+  'Accept-Ranges': {
+    description: 'Always "bytes": the endpoint supports seeking',
+    schema: string,
+  },
+}
+const contentRangeHeader = {
+  'Content-Range': {
+    description: 'bytes <start>-<end>/<total> on 206; bytes */<total> on 416',
+    schema: string,
+  },
+}
 const commonErrors = {
   '400': response('Invalid input or mixed credential transports', ref('Error')),
   '401': response('Missing, expired or revoked credential', ref('Error')),
@@ -146,7 +161,8 @@ export function createOpenAPI() {
         responses: {
           ...commonErrors,
           '200': {
-            description: 'Whole file. Accept-Ranges: bytes; cached privately for a day.',
+            description: 'Whole file; cached privately for a day.',
+            headers: acceptRangesHeader,
             content: {
               'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
               'audio/*': { schema: { type: 'string', format: 'binary' } },
@@ -155,12 +171,16 @@ export function createOpenAPI() {
           },
           '206': {
             description: 'The requested byte range; Content-Range carries the full size',
+            headers: { ...acceptRangesHeader, ...contentRangeHeader },
             content: {
               'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
             },
           },
           '404': response('No such sample (a private upload is not one)', ref('Error')),
-          '416': response('Range starts past the end of the file', ref('Error')),
+          '416': {
+            ...response('Range starts past the end of the file', ref('Error')),
+            headers: contentRangeHeader,
+          },
         },
       },
     },
@@ -332,14 +352,18 @@ export function createOpenAPI() {
           ...commonErrors,
           '206': {
             description: 'The requested byte range; Content-Range carries the full size',
+            headers: { ...acceptRangesHeader, ...contentRangeHeader },
             content: {
               'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
             },
           },
-          '416': response('Range starts past the end of the file', ref('Error')),
+          '416': {
+            ...response('Range starts past the end of the file', ref('Error')),
+            headers: contentRangeHeader,
+          },
           '200': {
-            description:
-              'Original MIME and bytes. Accept-Ranges: bytes. nosniff; CSP default-src none; sandbox.',
+            description: 'Original MIME and bytes. nosniff; CSP default-src none; sandbox.',
+            headers: acceptRangesHeader,
             content: {
               'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
               'video/*': { schema: { type: 'string', format: 'binary' } },
