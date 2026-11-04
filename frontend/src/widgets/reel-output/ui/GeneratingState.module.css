@@ -106,3 +106,15 @@
     font-size: 64px;
   }
 }
+
+.wait {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.elapsed {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
